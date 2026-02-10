@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# AI Admin Panel — Update Script
+# AI Blog Bot — Update Script
 # ============================================================
 # Usage:
 #   ./docker/update.sh
@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${YELLOW}[UPDATE] Starting AI Admin Panel update...${NC}"
+echo -e "${YELLOW}[UPDATE] Starting AI Blog Bot update...${NC}"
 
 # Load profile from .env
 if [ -f ".env" ]; then
@@ -48,7 +48,7 @@ docker compose --profile "$PROFILE" up -d
 echo -e "${YELLOW}[5/5] Verifying...${NC}"
 sleep 10
 
-APP_STATUS=$(docker inspect --format='{{.State.Health.Status}}' ai-admin-app 2>/dev/null || echo "unknown")
+APP_STATUS=$(docker inspect --format='{{.State.Health.Status}}' ai-blog-bot-app 2>/dev/null || echo "unknown")
 
 if [ "$APP_STATUS" = "healthy" ]; then
   echo -e "${GREEN}[SUCCESS] Update complete! Application is healthy.${NC}"

@@ -1,14 +1,20 @@
 # ============================================================
-# AI Admin Panel — Docker Compose
+# AI Blog Bot — Docker Compose
 # ============================================================
+# Chatbot-based Hugo blog management with AI capabilities.
+# Connects to an external Ollama instance on a separate VM.
+#
 # Profiles:
-#   light    — App + External DB (you provide MySQL)
+#   light    — App only (you provide MySQL externally)
 #   balanced — App + MySQL (default, recommended)
 #   full     — App + MySQL + Nginx SSL reverse proxy
 #
-# Usage:
+# Quick start:
+#   cp .env.example .env   # edit .env with your settings
 #   docker compose --profile balanced up -d
-#   docker compose --profile full up -d
+#
+# Or use the auto-installer:
+#   ./setup.sh --auto --ollama 192.168.1.100
 # ============================================================
 
 services:
@@ -19,27 +25,27 @@ services:
   # --------------------------------------------------------
   mysql:
     image: mysql:8.0
-    container_name: ai-admin-db
+    container_name: ai-blog-bot-db
     profiles: ["balanced", "full"]
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-ai_admin_root_2024}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_admin_panel}
-      MYSQL_USER: ${MYSQL_USER:-ai_admin}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ai_admin_pass_2024}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-ai_blog_bot_root_2024}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_blog_bot}
+      MYSQL_USER: ${MYSQL_USER:-ai_blog_bot}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ai_blog_bot_pass_2024}
     ports:
       - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-ai_admin_root_2024}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-ai_blog_bot_root_2024}"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
     networks:
-      - ai-admin-net
+      - ai-blog-net
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
@@ -48,22 +54,22 @@ services:
       --innodb-buffer-pool-size=256M
 
   # --------------------------------------------------------
-  # AI Admin Panel Application
+  # AI Blog Bot Application
   # All profiles
   # --------------------------------------------------------
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ai-admin-panel:latest
-    container_name: ai-admin-app
+    image: ai-blog-bot:latest
+    container_name: ai-blog-bot-app
     restart: unless-stopped
     ports:
       - "${APP_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:-mysql://ai_admin:ai_admin_pass_2024@mysql:3306/ai_admin_panel}
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-$(openssl rand -hex 16)}
+      DATABASE_URL: ${DATABASE_URL:-mysql://ai_blog_bot:ai_blog_bot_pass_2024@mysql:3306/ai_blog_bot}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       VITE_APP_ID: ${VITE_APP_ID:-}
       OAUTH_SERVER_URL: ${OAUTH_SERVER_URL:-https://api.manus.im}
       VITE_OAUTH_PORTAL_URL: ${VITE_OAUTH_PORTAL_URL:-}
@@ -73,12 +79,14 @@ services:
       BUILT_IN_FORGE_API_KEY: ${BUILT_IN_FORGE_API_KEY:-}
       VITE_FRONTEND_FORGE_API_KEY: ${VITE_FRONTEND_FORGE_API_KEY:-}
       VITE_FRONTEND_FORGE_API_URL: ${VITE_FRONTEND_FORGE_API_URL:-}
-      VITE_APP_TITLE: ${VITE_APP_TITLE:-AI Admin Panel}
+      VITE_APP_TITLE: ${VITE_APP_TITLE:-AI Blog Bot}
       VITE_APP_LOGO: ${VITE_APP_LOGO:-}
-      # Ollama / Local LLM
+      # ─── Ollama / Local LLM (external VM) ───
+      # Set OLLAMA_HOST to your Ollama VM IP:port
+      # Example: OLLAMA_HOST=http://192.168.1.100:11434
       OLLAMA_HOST: ${OLLAMA_HOST:-}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
-      # Hugo API
+      # ─── Hugo Blog API ───
       HUGO_API_URL: ${HUGO_API_URL:-}
       HUGO_API_KEY: ${HUGO_API_KEY:-}
     depends_on:
@@ -92,7 +100,7 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - ai-admin-net
+      - ai-blog-net
 
   # --------------------------------------------------------
   # Nginx Reverse Proxy with SSL
@@ -100,7 +108,7 @@ services:
   # --------------------------------------------------------
   nginx:
     image: nginx:alpine
-    container_name: ai-admin-nginx
+    container_name: ai-blog-bot-nginx
     profiles: ["full"]
     restart: unless-stopped
     ports:
@@ -119,7 +127,7 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - ai-admin-net
+      - ai-blog-net
 
 volumes:
   mysql_data:
@@ -128,5 +136,5 @@ volumes:
     driver: local
 
 networks:
-  ai-admin-net:
+  ai-blog-net:
     driver: bridge

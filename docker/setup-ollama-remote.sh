@@ -10,7 +10,7 @@
 #   4. Set up as a systemd service
 #
 # Usage (on the Ollama VM):
-#   curl -fsSL https://raw.githubusercontent.com/sileade/ai-admin-panel/main/docker/setup-ollama-remote.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/sileade/ai-blog-bot/main/docker/setup-ollama-remote.sh | bash
 #   # or
 #   ./setup-ollama-remote.sh [model_name]
 # ============================================================
@@ -110,7 +110,7 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║   Ollama Server Ready!                       ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${BOLD}Connection info for AI Admin Panel:${NC}"
+echo -e "  ${BOLD}Connection info for AI Blog Bot:${NC}"
 echo ""
 echo -e "  OLLAMA_HOST = ${CYAN}http://${SERVER_IP}:11434${NC}"
 echo -e "  OLLAMA_MODEL = ${CYAN}${MODEL}${NC}"
@@ -126,7 +126,7 @@ echo -e "  ${BOLD}Firewall:${NC}"
 echo -e "  Make sure port 11434 is open:"
 echo -e "  ${CYAN}sudo ufw allow 11434/tcp${NC}"
 echo ""
-echo -e "  ${BOLD}Test from AI Admin Panel server:${NC}"
+echo -e "  ${BOLD}Test from AI Blog Bot server:${NC}"
 echo -e "  ${CYAN}curl http://${SERVER_IP}:11434/api/tags${NC}"
 echo ""
 echo -e "  ${BOLD}Useful commands:${NC}"

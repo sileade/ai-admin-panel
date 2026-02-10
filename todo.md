@@ -69,4 +69,21 @@
 - [x] Auto-migration on startup
 - [x] Backup script for database
 - [x] Update README with Docker deployment guide
-- [ ] Push updated code to GitHub (in progress)
+- [x] Push updated code to GitHub
+
+## Chatbot Redesign (v2)
+- [ ] Remove all admin panel pages (Articles, Editor, AiGenerate, AiEdit, Images, Assistant, Settings)
+- [ ] Create unified chat-bot backend router with tool-calling architecture
+- [ ] Implement chat tools: list_articles, create_article, edit_article, delete_article
+- [ ] Implement chat tools: generate_article, edit_article_ai, optimize_seo
+- [ ] Implement chat tools: search_images, generate_image
+- [ ] Implement chat tools: get_settings, save_settings, sync_hugo
+- [ ] Implement chat message history in database
+- [ ] Create single-page chat UI with message bubbles, tool results, image previews
+- [ ] Add quick-action suggestions and command hints in chat
+- [ ] Add markdown rendering for article previews in chat
+- [ ] Add image gallery rendering in chat responses
+- [ ] Update DashboardLayout or remove in favor of chat-only layout
+- [ ] Update Docker Compose for chatbot version
+- [ ] Update README with chatbot documentation
+- [ ] Push to GitHub

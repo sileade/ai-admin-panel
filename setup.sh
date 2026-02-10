@@ -1,12 +1,13 @@
 #!/bin/bash
 # ============================================================
-# AI Admin Panel — One-Command Auto-Deployment Script
+# AI Blog Bot — One-Command Auto-Deployment Script
 # ============================================================
 # Usage:
 #   chmod +x setup.sh
 #   ./setup.sh                    # Interactive setup
 #   ./setup.sh --profile balanced # Non-interactive with profile
 #   ./setup.sh --auto             # Full auto with defaults
+#   ./setup.sh --auto --ollama 192.168.1.100
 # ============================================================
 
 set -e
@@ -25,8 +26,8 @@ print_banner() {
   echo ""
   echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
   echo -e "${CYAN}║                                                          ║${NC}"
-  echo -e "${CYAN}║   ${BOLD}AI Admin Panel${NC}${CYAN} — Automated Deployment                 ║${NC}"
-  echo -e "${CYAN}║   CMS with AI Assistant for Hugo Blog                    ║${NC}"
+  echo -e "${CYAN}║   ${BOLD}AI Blog Bot${NC}${CYAN} — Automated Deployment                     ║${NC}"
+  echo -e "${CYAN}║   Chatbot for Hugo Blog Management with AI               ║${NC}"
   echo -e "${CYAN}║                                                          ║${NC}"
   echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
   echo ""
@@ -55,8 +56,12 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --profile <name>   Set profile: light, balanced, full"
       echo "  --auto             Non-interactive mode with defaults"
-      echo "  --ollama <ip:port> Ollama server address (e.g., 192.168.1.100:11434)"
+      echo "  --ollama <ip>      Ollama server address (e.g., 192.168.1.100)"
       echo "  --help             Show this help"
+      echo ""
+      echo "Examples:"
+      echo "  ./setup.sh --auto --ollama 192.168.1.100"
+      echo "  ./setup.sh --profile full --ollama 10.0.0.5:11434"
       exit 0
       ;;
     *) log_error "Unknown option: $1"; exit 1 ;;
@@ -71,7 +76,6 @@ check_prerequisites() {
 
   local missing=()
 
-  # Docker
   if command -v docker &> /dev/null; then
     DOCKER_VERSION=$(docker --version | grep -oP '\d+\.\d+\.\d+' | head -1)
     log_success "Docker ${DOCKER_VERSION} found"
@@ -80,28 +84,23 @@ check_prerequisites() {
     log_error "Docker not found"
   fi
 
-  # Docker Compose
   if docker compose version &> /dev/null; then
     COMPOSE_VERSION=$(docker compose version | grep -oP '\d+\.\d+\.\d+' | head -1)
     log_success "Docker Compose ${COMPOSE_VERSION} found"
   elif command -v docker-compose &> /dev/null; then
     COMPOSE_VERSION=$(docker-compose --version | grep -oP '\d+\.\d+\.\d+' | head -1)
     log_success "Docker Compose ${COMPOSE_VERSION} found (legacy)"
-    log_warn "Consider upgrading to Docker Compose V2"
   else
     missing+=("docker-compose")
     log_error "Docker Compose not found"
   fi
 
-  # Git
   if command -v git &> /dev/null; then
     log_success "Git found"
   else
-    missing+=("git")
     log_warn "Git not found (optional, for updates)"
   fi
 
-  # Check if Docker daemon is running
   if docker info &> /dev/null; then
     log_success "Docker daemon is running"
   else
@@ -140,15 +139,12 @@ select_profile() {
   echo -e "${BOLD}Available profiles:${NC}"
   echo ""
   echo -e "  ${GREEN}1) light${NC}     — App only (bring your own MySQL)"
-  echo -e "                Requires: External MySQL database"
   echo -e "                RAM: ~256 MB"
   echo ""
   echo -e "  ${CYAN}2) balanced${NC}  — App + MySQL ${YELLOW}(recommended)${NC}"
-  echo -e "                Includes: MySQL 8 database"
   echo -e "                RAM: ~512 MB"
   echo ""
   echo -e "  ${BLUE}3) full${NC}      — App + MySQL + Nginx reverse proxy"
-  echo -e "                Includes: MySQL 8 + Nginx with SSL support"
   echo -e "                RAM: ~768 MB"
   echo ""
 
@@ -171,13 +167,11 @@ select_profile() {
 configure_environment() {
   log_step "Step 3/6: Configuring Environment"
 
-  # Generate secure random strings
   generate_secret() {
     openssl rand -hex 32 2>/dev/null || \
     head -c 64 /dev/urandom | base64 | tr -d '\n/+=' | head -c 64
   }
 
-  # Start with template
   if [ -f ".env" ]; then
     log_warn ".env file already exists"
     if [ "$AUTO_MODE" = false ]; then
@@ -221,7 +215,7 @@ configure_environment() {
     log_success "Ollama configured: ${OLLAMA_IP}"
   elif [ "$AUTO_MODE" = false ]; then
     echo ""
-    echo -e "${BOLD}Ollama Configuration:${NC}"
+    echo -e "${BOLD}Ollama Configuration (External VM):${NC}"
     echo "  Enter the IP address of your Ollama server."
     echo "  Leave empty to use built-in AI only."
     echo ""
@@ -260,7 +254,7 @@ configure_environment() {
     fi
   fi
 
-  # Set DATABASE_URL for light profile
+  # Set DATABASE_URL
   if [ "$PROFILE" = "light" ] && [ "$AUTO_MODE" = false ]; then
     echo ""
     echo -e "${BOLD}External Database Configuration:${NC}"
@@ -269,8 +263,7 @@ configure_environment() {
       echo "DATABASE_URL=${db_url}" >> .env
     fi
   else
-    # For balanced/full, construct from MySQL vars
-    echo "DATABASE_URL=mysql://ai_admin:${MYSQL_PASS}@mysql:3306/ai_admin_panel" >> .env
+    echo "DATABASE_URL=mysql://ai_blog_bot:${MYSQL_PASS}@mysql:3306/ai_blog_bot" >> .env
   fi
 
   log_success "Environment configured successfully"
@@ -282,24 +275,19 @@ configure_environment() {
 build_and_deploy() {
   log_step "Step 4/6: Building and Deploying"
 
-  # Create SSL directory for full profile
   if [ "$PROFILE" = "full" ]; then
     mkdir -p docker/nginx/ssl
     log_info "SSL directory created at docker/nginx/ssl/"
-    log_info "Place your SSL certificates there (fullchain.pem, privkey.pem)"
   fi
 
-  # Pull base images
   log_info "Pulling base images..."
   docker compose --profile "$PROFILE" pull 2>/dev/null || true
 
-  # Build application
-  log_info "Building AI Admin Panel..."
+  log_info "Building AI Blog Bot..."
   docker compose --profile "$PROFILE" build --no-cache
 
   log_success "Build completed"
 
-  # Start services
   log_info "Starting services..."
   docker compose --profile "$PROFILE" up -d
 
@@ -312,14 +300,13 @@ build_and_deploy() {
 verify_deployment() {
   log_step "Step 5/6: Verifying Deployment"
 
-  # Wait for services to be healthy
   log_info "Waiting for services to become healthy..."
 
   MAX_WAIT=120
   WAITED=0
 
   while [ $WAITED -lt $MAX_WAIT ]; do
-    APP_STATUS=$(docker inspect --format='{{.State.Health.Status}}' ai-admin-app 2>/dev/null || echo "starting")
+    APP_STATUS=$(docker inspect --format='{{.State.Health.Status}}' ai-blog-bot-app 2>/dev/null || echo "starting")
 
     if [ "$APP_STATUS" = "healthy" ]; then
       log_success "Application is healthy!"
@@ -338,12 +325,10 @@ verify_deployment() {
     log_info "Check logs: docker compose logs app"
   fi
 
-  # Check all services
   echo ""
   log_info "Service status:"
   docker compose --profile "$PROFILE" ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 
-  # Test connectivity
   echo ""
   APP_PORT=$(grep APP_PORT .env 2>/dev/null | cut -d= -f2)
   APP_PORT=${APP_PORT:-3000}
@@ -379,7 +364,7 @@ print_summary() {
 
   echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
   echo -e "${GREEN}║                                                          ║${NC}"
-  echo -e "${GREEN}║   ${BOLD}Deployment Complete!${NC}${GREEN}                                    ║${NC}"
+  echo -e "${GREEN}║   ${BOLD}AI Blog Bot — Deployment Complete!${NC}${GREEN}                     ║${NC}"
   echo -e "${GREEN}║                                                          ║${NC}"
   echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
   echo ""
@@ -389,19 +374,27 @@ print_summary() {
   echo ""
   echo -e "  ${BOLD}Profile:${NC}      ${PROFILE}"
   echo ""
+  echo -e "  ${BOLD}How to use:${NC}"
+  echo -e "    1. Open http://localhost:${APP_PORT} in your browser"
+  echo -e "    2. Log in with your account"
+  echo -e "    3. Start chatting with the AI Blog Bot!"
+  echo -e "    4. Try: 'Покажи список статей' or 'Напиши статью про AI'"
+  echo ""
+  echo -e "  ${BOLD}Chat commands:${NC}"
+  echo -e "    - Article management: list, create, edit, delete articles"
+  echo -e "    - AI writing: generate full articles by topic"
+  echo -e "    - AI editing: improve, rewrite existing content"
+  echo -e "    - Image search: find images for articles"
+  echo -e "    - Image generation: create covers and illustrations"
+  echo -e "    - Settings: configure Hugo API and LLM via chat"
+  echo ""
   echo -e "  ${BOLD}Useful commands:${NC}"
   echo -e "    Logs:     docker compose logs -f app"
   echo -e "    Status:   docker compose ps"
   echo -e "    Stop:     docker compose down"
   echo -e "    Restart:  docker compose restart app"
-  echo -e "    Update:   git pull && docker compose build && docker compose up -d"
+  echo -e "    Update:   ./docker/update.sh"
   echo -e "    Backup:   ./docker/backup.sh"
-  echo ""
-  echo -e "  ${BOLD}First steps:${NC}"
-  echo -e "    1. Open http://localhost:${APP_PORT} in your browser"
-  echo -e "    2. Log in with Manus OAuth"
-  echo -e "    3. Go to Settings → configure Hugo API and LLM"
-  echo -e "    4. Click 'Sync' on Dashboard to load articles"
   echo ""
 
   if [ "$PROFILE" = "full" ]; then

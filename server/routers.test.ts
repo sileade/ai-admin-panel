@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import { COOKIE_NAME } from "../shared/const";
 import type { TrpcContext } from "./_core/context";
@@ -34,9 +34,7 @@ function createUnauthContext(): TrpcContext {
   return {
     user: null,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
-    res: {
-      clearCookie: () => {},
-    } as TrpcContext["res"],
+    res: { clearCookie: () => {} } as TrpcContext["res"],
   };
 }
 
@@ -55,12 +53,11 @@ function createUserContext(): TrpcContext {
   return {
     user,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
-    res: {
-      clearCookie: () => {},
-    } as TrpcContext["res"],
+    res: { clearCookie: () => {} } as TrpcContext["res"],
   };
 }
 
+// ─── Auth Tests ───
 describe("auth.me", () => {
   it("returns null for unauthenticated user", async () => {
     const ctx = createUnauthContext();
@@ -90,78 +87,169 @@ describe("auth.logout", () => {
   });
 });
 
-describe("hugo router - access control", () => {
-  it("rejects unauthenticated users from getStats", async () => {
+// ─── Chat Router Access Control ───
+describe("chat.getSettings - access control", () => {
+  it("rejects unauthenticated users", async () => {
     const ctx = createUnauthContext();
     const caller = appRouter.createCaller(ctx);
-    await expect(caller.hugo.getStats()).rejects.toThrow();
+    await expect(caller.chat.getSettings()).rejects.toThrow();
   });
 
-  it("rejects regular users from getStats (admin only)", async () => {
+  it("rejects regular users (admin only)", async () => {
     const ctx = createUserContext();
     const caller = appRouter.createCaller(ctx);
-    await expect(caller.hugo.getStats()).rejects.toThrow();
+    await expect(caller.chat.getSettings()).rejects.toThrow();
   });
 
-  it("allows admin to access getStats", async () => {
+  it("allows admin to get settings", async () => {
     const { ctx } = createAdminContext();
     const caller = appRouter.createCaller(ctx);
-    const result = await caller.hugo.getStats();
-    expect(result).toBeDefined();
-    expect(typeof result.total).toBe("number");
-    expect(typeof result.drafts).toBe("number");
-    expect(typeof result.published).toBe("number");
-  });
-});
-
-describe("hugo router - listArticles", () => {
-  it("allows admin to list articles", async () => {
-    const { ctx } = createAdminContext();
-    const caller = appRouter.createCaller(ctx);
-    const result = await caller.hugo.listArticles({ limit: 10 });
-    expect(result).toBeDefined();
-    expect(Array.isArray(result.items)).toBe(true);
-    expect(typeof result.total).toBe("number");
-  });
-
-  it("supports search parameter", async () => {
-    const { ctx } = createAdminContext();
-    const caller = appRouter.createCaller(ctx);
-    const result = await caller.hugo.listArticles({ search: "test", limit: 5 });
-    expect(result).toBeDefined();
-    expect(Array.isArray(result.items)).toBe(true);
-  });
-});
-
-describe("ai router - access control", () => {
-  it("rejects unauthenticated users from getLlmConfig", async () => {
-    const ctx = createUnauthContext();
-    const caller = appRouter.createCaller(ctx);
-    await expect(caller.ai.getLlmConfig()).rejects.toThrow();
-  });
-
-  it("rejects regular users from getLlmConfig (admin only)", async () => {
-    const ctx = createUserContext();
-    const caller = appRouter.createCaller(ctx);
-    await expect(caller.ai.getLlmConfig()).rejects.toThrow();
-  });
-
-  it("allows admin to get LLM config", async () => {
-    const { ctx } = createAdminContext();
-    const caller = appRouter.createCaller(ctx);
-    const result = await caller.ai.getLlmConfig();
+    const result = await caller.chat.getSettings();
     expect(result).toBeDefined();
     expect(typeof result.useLocal).toBe("boolean");
-    expect(typeof result.endpoint).toBe("string");
+    expect(typeof result.hugoUrl).toBe("string");
+    expect(typeof result.llmEndpoint).toBe("string");
+    expect(typeof result.llmModel).toBe("string");
   });
 });
 
-describe("hugo router - getConfig", () => {
-  it("returns Hugo config for admin", async () => {
+describe("chat.saveSettings - access control", () => {
+  it("rejects unauthenticated users", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.saveSettings({ hugoUrl: "https://example.com" })
+    ).rejects.toThrow();
+  });
+
+  it("rejects regular users", async () => {
+    const ctx = createUserContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.saveSettings({ llmModel: "test" })
+    ).rejects.toThrow();
+  });
+});
+
+describe("chat.listConversations - access control", () => {
+  it("rejects unauthenticated users", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.chat.listConversations()).rejects.toThrow();
+  });
+
+  it("rejects regular users", async () => {
+    const ctx = createUserContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.chat.listConversations()).rejects.toThrow();
+  });
+
+  it("allows admin to list conversations", async () => {
     const { ctx } = createAdminContext();
     const caller = appRouter.createCaller(ctx);
-    const result = await caller.hugo.getConfig();
-    expect(result).toBeDefined();
-    expect(typeof result.baseUrl).toBe("string");
+    const result = await caller.chat.listConversations();
+    expect(Array.isArray(result)).toBe(true);
+  });
+});
+
+describe("chat.createConversation - access control", () => {
+  it("rejects unauthenticated users", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.createConversation({ title: "Test" })
+    ).rejects.toThrow();
+  });
+
+  it("rejects regular users", async () => {
+    const ctx = createUserContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.createConversation({ title: "Test" })
+    ).rejects.toThrow();
+  });
+});
+
+describe("chat.sendMessage - validation", () => {
+  it("rejects unauthenticated users", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.sendMessage({ conversationId: 1, message: "hello" })
+    ).rejects.toThrow();
+  });
+
+  it("rejects regular users", async () => {
+    const ctx = createUserContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.sendMessage({ conversationId: 1, message: "hello" })
+    ).rejects.toThrow();
+  });
+
+  it("rejects empty messages", async () => {
+    const { ctx } = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.sendMessage({ conversationId: 1, message: "" })
+    ).rejects.toThrow();
+  });
+});
+
+describe("chat.deleteConversation - access control", () => {
+  it("rejects unauthenticated users", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.deleteConversation({ id: 1 })
+    ).rejects.toThrow();
+  });
+
+  it("rejects regular users", async () => {
+    const ctx = createUserContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.deleteConversation({ id: 1 })
+    ).rejects.toThrow();
+  });
+});
+
+describe("chat.renameConversation - access control", () => {
+  it("rejects unauthenticated users", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.renameConversation({ id: 1, title: "New" })
+    ).rejects.toThrow();
+  });
+
+  it("rejects regular users", async () => {
+    const ctx = createUserContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.chat.renameConversation({ id: 1, title: "New" })
+    ).rejects.toThrow();
+  });
+});
+
+// ─── Router Structure ───
+describe("router structure", () => {
+  it("has all expected routers", () => {
+    const caller = appRouter.createCaller(createUnauthContext());
+    expect(caller.auth).toBeDefined();
+    expect(caller.chat).toBeDefined();
+    expect(caller.system).toBeDefined();
+  });
+
+  it("chat router has all expected procedures", () => {
+    const caller = appRouter.createCaller(createUnauthContext());
+    expect(caller.chat.getSettings).toBeDefined();
+    expect(caller.chat.saveSettings).toBeDefined();
+    expect(caller.chat.listConversations).toBeDefined();
+    expect(caller.chat.createConversation).toBeDefined();
+    expect(caller.chat.getConversation).toBeDefined();
+    expect(caller.chat.deleteConversation).toBeDefined();
+    expect(caller.chat.renameConversation).toBeDefined();
+    expect(caller.chat.sendMessage).toBeDefined();
   });
 });

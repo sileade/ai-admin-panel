@@ -2,8 +2,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
-import { hugoRouter } from "./routers/hugo";
-import { aiRouter } from "./routers/ai";
+import { chatRouter } from "./routers/chat";
 
 export const appRouter = router({
   system: systemRouter,
@@ -15,8 +14,7 @@ export const appRouter = router({
       return { success: true } as const;
     }),
   }),
-  hugo: hugoRouter,
-  ai: aiRouter,
+  chat: chatRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -1,13 +1,12 @@
 -- ============================================================
--- AI Admin Panel — Database Initialization
+-- AI Blog Bot — Database Initialization
 -- Auto-executed on first MySQL container startup
 -- ============================================================
 
 SET NAMES utf8mb4;
 SET CHARACTER SET utf8mb4;
 
--- Create tables matching Drizzle schema
-
+-- Core user table
 CREATE TABLE IF NOT EXISTS `users` (
   `id` int NOT NULL AUTO_INCREMENT,
   `openId` varchar(64) NOT NULL,
@@ -22,6 +21,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   UNIQUE KEY `users_openId_unique` (`openId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Key-value settings
 CREATE TABLE IF NOT EXISTS `settings` (
   `id` int NOT NULL AUTO_INCREMENT,
   `key` varchar(128) NOT NULL,
@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS `settings` (
   UNIQUE KEY `settings_key_unique` (`key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Articles cache from Hugo
 CREATE TABLE IF NOT EXISTS `articles` (
   `id` int NOT NULL AUTO_INCREMENT,
   `filename` varchar(512) NOT NULL,
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS `articles` (
   UNIQUE KEY `articles_filename_unique` (`filename`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- AI generation log
 CREATE TABLE IF NOT EXISTS `ai_generations` (
   `id` int NOT NULL AUTO_INCREMENT,
   `userId` int NOT NULL,
@@ -66,5 +68,27 @@ CREATE TABLE IF NOT EXISTS `ai_generations` (
   KEY `idx_ai_gen_created` (`createdAt`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Insert default settings for Ollama if env vars are provided
--- These will be overwritten by the app on first config save
+-- Chat conversations
+CREATE TABLE IF NOT EXISTS `conversations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `userId` int NOT NULL,
+  `title` varchar(256) NOT NULL DEFAULT 'Новый чат',
+  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_conv_user` (`userId`),
+  KEY `idx_conv_updated` (`updatedAt`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Chat messages
+CREATE TABLE IF NOT EXISTS `chat_messages` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `conversationId` int NOT NULL,
+  `role` enum('user','assistant','system') NOT NULL,
+  `content` text NOT NULL,
+  `metadata` text,
+  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_msg_conv` (`conversationId`),
+  KEY `idx_msg_created` (`createdAt`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

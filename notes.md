@@ -22,3 +22,13 @@
 - docker/env.example: Template for .env configuration
 - .dockerignore: Optimized build context
 - README.md: Full documentation with Docker instructions
+
+## Screenshot 2 - Chat Interface (v2 Redesign)
+- Full-screen chatbot UI rendering correctly
+- Left sidebar: "AI Blog Bot" branding, "Новый чат" button, empty conversations list
+- Main area: welcome screen with Bot icon, "AI Blog Assistant" title
+- 6 suggested prompts in 2-column grid with colored icons
+- Bottom input area with placeholder and send button
+- User info (Diramp) in sidebar footer with settings button
+- Dark theme applied correctly, all text visible
+- Clean, professional look - no panel/dashboard elements

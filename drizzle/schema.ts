@@ -50,7 +50,7 @@ export type InsertArticle = typeof articles.$inferInsert;
 export const aiGenerations = mysqlTable("ai_generations", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  type: mysqlEnum("type", ["article_generate", "article_edit", "image_generate", "seo_optimize", "assistant"]).notNull(),
+  type: mysqlEnum("type", ["article_generate", "article_edit", "image_generate", "seo_optimize", "assistant", "chat"]).notNull(),
   prompt: text("prompt").notNull(),
   result: text("result"),
   model: varchar("model", { length: 256 }),
@@ -61,3 +61,30 @@ export const aiGenerations = mysqlTable("ai_generations", {
 
 export type AiGeneration = typeof aiGenerations.$inferSelect;
 export type InsertAiGeneration = typeof aiGenerations.$inferInsert;
+
+// Chat conversations
+export const chatConversations = mysqlTable("chat_conversations", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 512 }).default("Новый чат"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ChatConversation = typeof chatConversations.$inferSelect;
+export type InsertChatConversation = typeof chatConversations.$inferInsert;
+
+// Chat messages within conversations
+export const chatMessages = mysqlTable("chat_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  conversationId: int("conversationId").notNull(),
+  role: mysqlEnum("role", ["user", "assistant", "system", "tool"]).notNull(),
+  content: text("content").notNull(),
+  toolName: varchar("toolName", { length: 128 }),
+  toolResult: text("toolResult"),
+  metadata: text("metadata"), // JSON string for images, article data, etc.
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatMessage = typeof chatMessages.$inferInsert;

@@ -1,6 +1,11 @@
-import { eq, desc, sql, like, and, or } from "drizzle-orm";
+import { eq, desc, sql, like, and, or, asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, settings, articles, aiGenerations, type InsertArticle, type InsertAiGeneration } from "../drizzle/schema";
+import {
+  InsertUser, users, settings, articles, aiGenerations,
+  chatConversations, chatMessages,
+  type InsertArticle, type InsertAiGeneration,
+  type InsertChatConversation, type InsertChatMessage
+} from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -22,7 +27,6 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
   if (!db) { console.warn("[Database] Cannot upsert user: database not available"); return; }
-
   try {
     const values: InsertUser = { openId: user.openId };
     const updateSet: Record<string, unknown> = {};
@@ -82,7 +86,6 @@ export async function getAllSettings(): Promise<Record<string, string>> {
 export async function getArticles(opts?: { search?: string; tag?: string; limit?: number; offset?: number }) {
   const db = await getDb();
   if (!db) return { items: [], total: 0 };
-
   const conditions = [];
   if (opts?.search) {
     conditions.push(or(like(articles.title, `%${opts.search}%`), like(articles.tags, `%${opts.search}%`)));
@@ -90,13 +93,11 @@ export async function getArticles(opts?: { search?: string; tag?: string; limit?
   if (opts?.tag) {
     conditions.push(like(articles.tags, `%${opts.tag}%`));
   }
-
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const [items, countResult] = await Promise.all([
     db.select().from(articles).where(where).orderBy(desc(articles.updatedAt)).limit(opts?.limit ?? 50).offset(opts?.offset ?? 0),
     db.select({ count: sql<number>`count(*)` }).from(articles).where(where),
   ]);
-
   return { items, total: countResult[0]?.count ?? 0 };
 }
 
@@ -169,4 +170,66 @@ export async function getRecentGenerations(userId: number, limit = 20) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(aiGenerations).where(eq(aiGenerations.userId, userId)).orderBy(desc(aiGenerations.createdAt)).limit(limit);
+}
+
+// ─── Chat Conversation helpers ───
+export async function createConversation(userId: number, title?: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(chatConversations).values({
+    userId,
+    title: title || "Новый чат",
+  });
+  return result[0]?.insertId;
+}
+
+export async function getConversations(userId: number, limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(chatConversations)
+    .where(eq(chatConversations.userId, userId))
+    .orderBy(desc(chatConversations.updatedAt))
+    .limit(limit);
+}
+
+export async function getConversation(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(chatConversations).where(eq(chatConversations.id, id)).limit(1);
+  return result.length > 0 ? result[0] : null;
+}
+
+export async function updateConversationTitle(id: number, title: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(chatConversations).set({ title }).where(eq(chatConversations.id, id));
+}
+
+export async function deleteConversation(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(chatMessages).where(eq(chatMessages.conversationId, id));
+  await db.delete(chatConversations).where(eq(chatConversations.id, id));
+}
+
+// ─── Chat Message helpers ───
+export async function addChatMessage(msg: InsertChatMessage) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(chatMessages).values(msg);
+  // Touch conversation updatedAt
+  if (msg.conversationId) {
+    await db.update(chatConversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(chatConversations.id, msg.conversationId));
+  }
+  return result[0]?.insertId;
+}
+
+export async function getConversationMessages(conversationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(chatMessages)
+    .where(eq(chatMessages.conversationId, conversationId))
+    .orderBy(asc(chatMessages.createdAt));
 }
