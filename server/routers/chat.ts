@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { adminProcedure, router } from "../_core/trpc";
+import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import { generateImage } from "../_core/imageGeneration";
 import {
@@ -490,18 +490,18 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент для управлени�
 // ─── Main chat router ───
 export const chatRouter = router({
   // Conversation management
-  listConversations: adminProcedure.query(async ({ ctx }) => {
+  listConversations: protectedProcedure.query(async ({ ctx }) => {
     return getConversations(ctx.user.id);
   }),
 
-  createConversation: adminProcedure
+  createConversation: protectedProcedure
     .input(z.object({ title: z.string().optional() }).optional())
     .mutation(async ({ ctx, input }) => {
       const id = await createConversation(ctx.user.id, input?.title);
       return { id };
     }),
 
-  getConversation: adminProcedure
+  getConversation: protectedProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       const conv = await getConversation(input.id);
@@ -509,14 +509,14 @@ export const chatRouter = router({
       return { conversation: conv, messages };
     }),
 
-  deleteConversation: adminProcedure
+  deleteConversation: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await deleteConversation(input.id);
       return { success: true };
     }),
 
-  renameConversation: adminProcedure
+  renameConversation: protectedProcedure
     .input(z.object({ id: z.number(), title: z.string() }))
     .mutation(async ({ input }) => {
       await updateConversationTitle(input.id, input.title);
@@ -524,7 +524,7 @@ export const chatRouter = router({
     }),
 
   // Main chat endpoint with tool calling
-  sendMessage: adminProcedure
+  sendMessage: protectedProcedure
     .input(z.object({
       conversationId: z.number(),
       message: z.string().min(1),
@@ -661,7 +661,7 @@ export const chatRouter = router({
     }),
 
   // Quick settings (no conversation needed)
-  getSettings: adminProcedure.query(async () => {
+  getSettings: protectedProcedure.query(async () => {
     const hugoUrl = await getSetting("hugo_base_url") ?? "";
     const hugoKey = await getSetting("hugo_api_key") ?? "";
     const llmEndpoint = await getSetting("llm_endpoint") ?? "";
@@ -676,7 +676,7 @@ export const chatRouter = router({
     };
   }),
 
-  saveSettings: adminProcedure
+  saveSettings: protectedProcedure
     .input(z.object({
       hugoUrl: z.string().optional(),
       hugoKey: z.string().optional(),

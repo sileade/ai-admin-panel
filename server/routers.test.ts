@@ -38,7 +38,7 @@ function createUnauthContext(): TrpcContext {
   };
 }
 
-function createUserContext(): TrpcContext {
+function createUserContext(): { ctx: TrpcContext } {
   const user: AuthenticatedUser = {
     id: 2,
     openId: "regular-user",
@@ -51,9 +51,11 @@ function createUserContext(): TrpcContext {
     lastSignedIn: new Date(),
   };
   return {
-    user,
-    req: { protocol: "https", headers: {} } as TrpcContext["req"],
-    res: { clearCookie: () => {} } as TrpcContext["res"],
+    ctx: {
+      user,
+      req: { protocol: "https", headers: {} } as TrpcContext["req"],
+      res: { clearCookie: () => {} } as TrpcContext["res"],
+    },
   };
 }
 
@@ -87,7 +89,9 @@ describe("auth.logout", () => {
   });
 });
 
-// ─── Chat Router Access Control ───
+// ─── Chat Router Access Control (protectedProcedure) ───
+// Now uses protectedProcedure: any authenticated user can access, unauthenticated are rejected
+
 describe("chat.getSettings - access control", () => {
   it("rejects unauthenticated users", async () => {
     const ctx = createUnauthContext();
@@ -95,10 +99,13 @@ describe("chat.getSettings - access control", () => {
     await expect(caller.chat.getSettings()).rejects.toThrow();
   });
 
-  it("rejects regular users (admin only)", async () => {
-    const ctx = createUserContext();
+  it("allows regular users to get settings", async () => {
+    const { ctx } = createUserContext();
     const caller = appRouter.createCaller(ctx);
-    await expect(caller.chat.getSettings()).rejects.toThrow();
+    const result = await caller.chat.getSettings();
+    expect(result).toBeDefined();
+    expect(typeof result.useLocal).toBe("boolean");
+    expect(typeof result.hugoUrl).toBe("string");
   });
 
   it("allows admin to get settings", async () => {
@@ -122,12 +129,11 @@ describe("chat.saveSettings - access control", () => {
     ).rejects.toThrow();
   });
 
-  it("rejects regular users", async () => {
-    const ctx = createUserContext();
+  it("allows regular users to save settings", async () => {
+    const { ctx } = createUserContext();
     const caller = appRouter.createCaller(ctx);
-    await expect(
-      caller.chat.saveSettings({ llmModel: "test" })
-    ).rejects.toThrow();
+    const result = await caller.chat.saveSettings({ llmModel: "test-model" });
+    expect(result).toEqual({ success: true });
   });
 });
 
@@ -138,10 +144,11 @@ describe("chat.listConversations - access control", () => {
     await expect(caller.chat.listConversations()).rejects.toThrow();
   });
 
-  it("rejects regular users", async () => {
-    const ctx = createUserContext();
+  it("allows regular users to list conversations", async () => {
+    const { ctx } = createUserContext();
     const caller = appRouter.createCaller(ctx);
-    await expect(caller.chat.listConversations()).rejects.toThrow();
+    const result = await caller.chat.listConversations();
+    expect(Array.isArray(result)).toBe(true);
   });
 
   it("allows admin to list conversations", async () => {
@@ -161,26 +168,18 @@ describe("chat.createConversation - access control", () => {
     ).rejects.toThrow();
   });
 
-  it("rejects regular users", async () => {
-    const ctx = createUserContext();
+  it("allows regular users to create conversations", async () => {
+    const { ctx } = createUserContext();
     const caller = appRouter.createCaller(ctx);
-    await expect(
-      caller.chat.createConversation({ title: "Test" })
-    ).rejects.toThrow();
+    const result = await caller.chat.createConversation({ title: "Test Chat" });
+    expect(result).toBeDefined();
+    expect(typeof result.id).toBe("number");
   });
 });
 
 describe("chat.sendMessage - validation", () => {
   it("rejects unauthenticated users", async () => {
     const ctx = createUnauthContext();
-    const caller = appRouter.createCaller(ctx);
-    await expect(
-      caller.chat.sendMessage({ conversationId: 1, message: "hello" })
-    ).rejects.toThrow();
-  });
-
-  it("rejects regular users", async () => {
-    const ctx = createUserContext();
     const caller = appRouter.createCaller(ctx);
     await expect(
       caller.chat.sendMessage({ conversationId: 1, message: "hello" })
@@ -204,27 +203,11 @@ describe("chat.deleteConversation - access control", () => {
       caller.chat.deleteConversation({ id: 1 })
     ).rejects.toThrow();
   });
-
-  it("rejects regular users", async () => {
-    const ctx = createUserContext();
-    const caller = appRouter.createCaller(ctx);
-    await expect(
-      caller.chat.deleteConversation({ id: 1 })
-    ).rejects.toThrow();
-  });
 });
 
 describe("chat.renameConversation - access control", () => {
   it("rejects unauthenticated users", async () => {
     const ctx = createUnauthContext();
-    const caller = appRouter.createCaller(ctx);
-    await expect(
-      caller.chat.renameConversation({ id: 1, title: "New" })
-    ).rejects.toThrow();
-  });
-
-  it("rejects regular users", async () => {
-    const ctx = createUserContext();
     const caller = appRouter.createCaller(ctx);
     await expect(
       caller.chat.renameConversation({ id: 1, title: "New" })

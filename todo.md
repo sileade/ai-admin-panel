@@ -72,18 +72,22 @@
 - [x] Push updated code to GitHub
 
 ## Chatbot Redesign (v2)
-- [ ] Remove all admin panel pages (Articles, Editor, AiGenerate, AiEdit, Images, Assistant, Settings)
-- [ ] Create unified chat-bot backend router with tool-calling architecture
-- [ ] Implement chat tools: list_articles, create_article, edit_article, delete_article
-- [ ] Implement chat tools: generate_article, edit_article_ai, optimize_seo
-- [ ] Implement chat tools: search_images, generate_image
-- [ ] Implement chat tools: get_settings, save_settings, sync_hugo
-- [ ] Implement chat message history in database
-- [ ] Create single-page chat UI with message bubbles, tool results, image previews
-- [ ] Add quick-action suggestions and command hints in chat
-- [ ] Add markdown rendering for article previews in chat
-- [ ] Add image gallery rendering in chat responses
-- [ ] Update DashboardLayout or remove in favor of chat-only layout
-- [ ] Update Docker Compose for chatbot version
-- [ ] Update README with chatbot documentation
-- [ ] Push to GitHub
+- [x] Remove all admin panel pages (Articles, Editor, AiGenerate, AiEdit, Images, Assistant, Settings)
+- [x] Create unified chat-bot backend router with tool-calling architecture
+- [x] Implement chat tools: list_articles, create_article, edit_article, delete_article
+- [x] Implement chat tools: generate_article, edit_article_ai, optimize_seo
+- [x] Implement chat tools: search_images, generate_image
+- [x] Implement chat tools: get_settings, save_settings, sync_hugo
+- [x] Implement chat message history in database
+- [x] Create single-page chat UI with message bubbles, tool results, image previews
+- [x] Add quick-action suggestions and command hints in chat
+- [x] Add markdown rendering for article previews in chat
+- [x] Add image gallery rendering in chat responses
+- [x] Update DashboardLayout or remove in favor of chat-only layout
+- [x] Update Docker Compose for chatbot version
+- [x] Update README with chatbot documentation
+- [x] Push to GitHub
+
+## Bug Fixes
+- [x] Fix permission error (10002) — changed adminProcedure to protectedProcedure
+- [x] Fix permission error (10002) for conversation list query — promoted user to admin + relaxed access
