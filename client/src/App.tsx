@@ -4,32 +4,41 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import DashboardLayout from "./components/DashboardLayout";
 import Home from "./pages/Home";
+import Articles from "./pages/Articles";
+import Editor from "./pages/Editor";
+import AiGenerate from "./pages/AiGenerate";
+import AiEdit from "./pages/AiEdit";
+import Images from "./pages/Images";
+import Assistant from "./pages/Assistant";
+import SettingsPage from "./pages/Settings";
 
 function Router() {
-  // make sure to consider if you need authentication for certain routes
   return (
-    <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
-      <Route component={NotFound} />
-    </Switch>
+    <DashboardLayout>
+      <Switch>
+        <Route path="/" component={Home} />
+        <Route path="/articles" component={Articles} />
+        <Route path="/editor" component={Editor} />
+        <Route path="/editor/:filename" component={Editor} />
+        <Route path="/ai-generate" component={AiGenerate} />
+        <Route path="/ai-edit" component={AiEdit} />
+        <Route path="/ai-edit/:filename" component={AiEdit} />
+        <Route path="/images" component={Images} />
+        <Route path="/assistant" component={Assistant} />
+        <Route path="/settings" component={SettingsPage} />
+        <Route path="/404" component={NotFound} />
+        <Route component={NotFound} />
+      </Switch>
+    </DashboardLayout>
   );
 }
-
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
 
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        // switchable
-      >
+      <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
           <Router />
