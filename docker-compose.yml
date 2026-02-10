@@ -29,23 +29,33 @@ services:
     profiles: ["balanced", "full"]
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-ai_blog_bot_root_2024}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required - run setup.sh or set in .env}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_blog_bot}
       MYSQL_USER: ${MYSQL_USER:-ai_blog_bot}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ai_blog_bot_pass_2024}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required - run setup.sh or set in .env}
+    # Bind to localhost only — app connects via docker network
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-ai_blog_bot_root_2024}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
     networks:
       - ai-blog-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
@@ -68,8 +78,8 @@ services:
       - "${APP_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:-mysql://ai_blog_bot:ai_blog_bot_pass_2024@mysql:3306/ai_blog_bot}
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required - run setup.sh or set in .env}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - run setup.sh or set in .env}
       VITE_APP_ID: ${VITE_APP_ID:-}
       OAUTH_SERVER_URL: ${OAUTH_SERVER_URL:-https://api.manus.im}
       VITE_OAUTH_PORTAL_URL: ${VITE_OAUTH_PORTAL_URL:-}
@@ -82,8 +92,6 @@ services:
       VITE_APP_TITLE: ${VITE_APP_TITLE:-AI Blog Bot}
       VITE_APP_LOGO: ${VITE_APP_LOGO:-}
       # ─── Ollama / Local LLM (external VM) ───
-      # Set OLLAMA_HOST to your Ollama VM IP:port
-      # Example: OLLAMA_HOST=http://192.168.1.100:11434
       OLLAMA_HOST: ${OLLAMA_HOST:-}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       # ─── Hugo Blog API ───
@@ -101,6 +109,15 @@ services:
       start_period: 40s
     networks:
       - ai-blog-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   # --------------------------------------------------------
   # Nginx Reverse Proxy with SSL
@@ -128,6 +145,15 @@ services:
       retries: 3
     networks:
       - ai-blog-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
 volumes:
   mysql_data:

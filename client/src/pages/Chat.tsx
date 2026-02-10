@@ -13,6 +13,17 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -21,11 +32,12 @@ import {
   Bot, Send, Plus, Trash2, MessageSquare, Settings2,
   Loader2, User, Sparkles, Image, FileText, Search,
   PenTool, BarChart3, RefreshCw, Wand2, ChevronLeft,
-  Menu, X,
+  Menu, X, LogOut,
 } from "lucide-react";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
+import { getLoginUrl } from "@/const";
 
 type ToolResult = {
   name: string;
@@ -43,6 +55,12 @@ type ChatMsg = {
   createdAt: Date;
 };
 
+// Stable counter for unique message IDs (avoids Date.now collisions)
+let msgIdCounter = Date.now();
+function nextMsgId() {
+  return ++msgIdCounter;
+}
+
 const SUGGESTED_PROMPTS = [
   { icon: BarChart3, text: "Покажи статистику блога", color: "text-blue-400" },
   { icon: FileText, text: "Покажи список статей", color: "text-green-400" },
@@ -53,7 +71,7 @@ const SUGGESTED_PROMPTS = [
 ];
 
 export default function Chat() {
-  const { user } = useAuth();
+  const { user, loading: authLoading, isAuthenticated, logout } = useAuth();
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [localMessages, setLocalMessages] = useState<ChatMsg[]>([]);
@@ -62,6 +80,59 @@ export default function Chat() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Responsive check
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  useEffect(() => {
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile]);
+
+  // If not authenticated, show login prompt
+  if (authLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-6 bg-background text-foreground p-6">
+        <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <Bot className="h-8 w-8 text-primary" />
+        </div>
+        <h1 className="text-2xl font-semibold">AI Blog Assistant</h1>
+        <p className="text-muted-foreground text-center max-w-md">
+          Войдите в систему, чтобы начать управлять Hugo-блогом через AI-чат.
+        </p>
+        <Button asChild size="lg">
+          <a href={getLoginUrl()}>Войти</a>
+        </Button>
+      </div>
+    );
+  }
+
+  return <AuthenticatedChat user={user} />;
+}
+
+// ─── Authenticated Chat Component ───
+function AuthenticatedChat({ user }: { user: any }) {
+  const { logout } = useAuth();
+  const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
+  const [inputValue, setInputValue] = useState("");
+  const [localMessages, setLocalMessages] = useState<ChatMsg[]>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Responsive check
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -112,7 +183,7 @@ export default function Chat() {
       setLocalMessages(prev => {
         const withoutLoading = prev.filter(m => m.id !== -1);
         return [...withoutLoading, {
-          id: Date.now(),
+          id: nextMsgId(),
           role: "assistant" as const,
           content: data.content,
           toolName: null,
@@ -135,7 +206,6 @@ export default function Chat() {
   // Combine server messages with local optimistic messages
   const displayMessages = useMemo(() => {
     const serverMsgs = messagesQuery.data?.messages || [];
-    // If we have local messages that are newer, use them
     if (localMessages.length > 0) {
       const lastServerId = serverMsgs.length > 0 ? serverMsgs[serverMsgs.length - 1].id : 0;
       const newLocal = localMessages.filter(m => m.id > lastServerId || m.id < 0);
@@ -154,7 +224,15 @@ export default function Chat() {
     }
   }, [displayMessages]);
 
-  const handleSend = async (text?: string) => {
+  // Auto-resize textarea
+  const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputValue(e.target.value);
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 128) + "px";
+  }, []);
+
+  const handleSend = useCallback(async (text?: string) => {
     const msg = text || inputValue.trim();
     if (!msg || sendMsg.isPending) return;
 
@@ -173,12 +251,16 @@ export default function Chat() {
     }
 
     setInputValue("");
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
 
-    // Add optimistic user message
+    // Add optimistic user message + loading indicator
     setLocalMessages(prev => [
       ...prev,
       {
-        id: Date.now(),
+        id: nextMsgId(),
         role: "user" as const,
         content: msg,
         toolName: null,
@@ -198,29 +280,29 @@ export default function Chat() {
     ]);
 
     sendMsg.mutate({ conversationId: convId, message: msg });
-  };
+  }, [inputValue, activeConversationId, sendMsg.isPending, createConv]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
-  };
+  }, [handleSend]);
 
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     setActiveConversationId(null);
     setLocalMessages([]);
     if (isMobile) setSidebarOpen(false);
-  };
+  }, [isMobile]);
 
-  const handleSelectConversation = (id: number) => {
+  const handleSelectConversation = useCallback((id: number) => {
     setActiveConversationId(id);
     setLocalMessages([]);
     if (isMobile) setSidebarOpen(false);
-  };
+  }, [isMobile]);
 
   // Extract images from metadata for rendering
-  const extractImages = (metadata: string | null): Array<{ url: string; thumb?: string; description?: string }> => {
+  const extractImages = useCallback((metadata: string | null): Array<{ url: string; thumb?: string; description?: string }> => {
     if (!metadata) return [];
     try {
       const parsed = JSON.parse(metadata);
@@ -239,7 +321,12 @@ export default function Chat() {
     } catch {
       return [];
     }
-  };
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await logout();
+    window.location.reload();
+  }, [logout]);
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -258,7 +345,7 @@ export default function Chat() {
                 <span className="font-semibold text-sm">AI Blog Bot</span>
               </div>
               {isMobile && (
-                <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}>
+                <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)} aria-label="Закрыть боковую панель">
                   <X className="h-4 w-4" />
                 </Button>
               )}
@@ -292,20 +379,43 @@ export default function Chat() {
                         : "hover:bg-accent/50 text-muted-foreground"
                     )}
                     onClick={() => handleSelectConversation(conv.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSelectConversation(conv.id); }}
+                    aria-label={`Открыть чат: ${conv.title}`}
                   >
                     <MessageSquare className="h-4 w-4 shrink-0" />
                     <span className="truncate flex-1">{conv.title}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 opacity-0 group-hover:opacity-100 shrink-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteConv.mutate({ id: conv.id });
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 opacity-0 group-hover:opacity-100 shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Удалить чат: ${conv.title}`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Удалить чат?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Чат "{conv.title}" и вся его история будут удалены безвозвратно.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Отмена</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => deleteConv.mutate({ id: conv.id })}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          >
+                            Удалить
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                 ))}
                 {conversationsQuery.data?.length === 0 && (
@@ -326,10 +436,13 @@ export default function Chat() {
                     {user?.name?.charAt(0).toUpperCase() || "?"}
                   </span>
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-xs font-medium truncate">{user?.name || "User"}</p>
                   <p className="text-[10px] text-muted-foreground truncate">{user?.email || ""}</p>
                 </div>
+                <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleLogout} aria-label="Выйти">
+                  <LogOut className="h-3 w-3" />
+                </Button>
               </div>
             </div>
           </>
@@ -346,7 +459,7 @@ export default function Chat() {
         {/* Chat Header */}
         <div className="flex items-center gap-3 px-4 h-14 border-b border-border bg-card/50 backdrop-blur shrink-0">
           {!sidebarOpen && (
-            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="shrink-0">
+            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="shrink-0" aria-label="Открыть боковую панель">
               <Menu className="h-4 w-4" />
             </Button>
           )}
@@ -419,7 +532,7 @@ export default function Chat() {
 
                   return (
                     <div
-                      key={msg.id || idx}
+                      key={`${msg.id}-${idx}`}
                       className={cn(
                         "flex gap-3",
                         msg.role === "user" ? "justify-end" : "justify-start"
@@ -497,17 +610,19 @@ export default function Chat() {
             <Textarea
               ref={textareaRef}
               value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
+              onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
-              placeholder="Напишите сообщение... (Enter для отправки, Shift+Enter для новой строки)"
+              placeholder="Напишите сообщение... (Enter — отправить, Shift+Enter — новая строка)"
               className="flex-1 max-h-32 resize-none min-h-[42px] bg-background"
               rows={1}
+              aria-label="Сообщение для AI-ассистента"
             />
             <Button
               type="submit"
               size="icon"
               disabled={!inputValue.trim() || sendMsg.isPending}
               className="shrink-0 h-[42px] w-[42px]"
+              aria-label="Отправить сообщение"
             >
               {sendMsg.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -570,7 +685,7 @@ function SettingsDialog() {
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Настройки подключений</DialogTitle>
+          <DialogTitle>Настройки</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-3">

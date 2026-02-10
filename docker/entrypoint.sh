@@ -2,12 +2,12 @@
 set -e
 
 # ============================================================
-# AI Admin Panel — Container Entrypoint
+# AI Blog Bot — Container Entrypoint
 # Handles: DB wait, auto-migration, Ollama connectivity check
 # ============================================================
 
 echo "╔══════════════════════════════════════════════╗"
-echo "║   AI Admin Panel — Starting...               ║"
+echo "║   AI Blog Bot — Starting...                  ║"
 echo "╚══════════════════════════════════════════════╝"
 
 # --- Colors for output ---
@@ -16,27 +16,36 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# --- Wait for MySQL ---
+# --- Wait for MySQL using TCP check ---
 wait_for_db() {
   echo "${YELLOW}[1/4] Waiting for database...${NC}"
-  
+
   if [ -z "$DATABASE_URL" ]; then
     echo "${RED}ERROR: DATABASE_URL is not set${NC}"
     exit 1
   fi
 
   # Extract host and port from DATABASE_URL
+  # Supports: mysql://user:pass@host:port/db
   DB_HOST=$(echo "$DATABASE_URL" | sed -n 's|.*@\([^:/]*\).*|\1|p')
-  DB_PORT=$(echo "$DATABASE_URL" | sed -n 's|.*:\([0-9]*\)/.*|\1|p')
+  DB_PORT=$(echo "$DATABASE_URL" | sed -n 's|.*@[^:]*:\([0-9]*\)/.*|\1|p')
   DB_PORT=${DB_PORT:-3306}
 
   MAX_RETRIES=30
   RETRY=0
 
   while [ $RETRY -lt $MAX_RETRIES ]; do
-    if wget --spider --quiet "http://${DB_HOST}:${DB_PORT}" 2>/dev/null || \
-       nc -z "$DB_HOST" "$DB_PORT" 2>/dev/null; then
+    # Use /dev/tcp emulation via timeout+sh or wget to check TCP port
+    if (echo > /dev/tcp/${DB_HOST}/${DB_PORT}) 2>/dev/null; then
       echo "${GREEN}  ✓ Database is reachable at ${DB_HOST}:${DB_PORT}${NC}"
+      # Wait a bit more for MySQL to be fully ready
+      sleep 3
+      return 0
+    fi
+    # Fallback: try wget to any port (will fail fast if port closed)
+    if wget --spider --quiet --timeout=2 "http://${DB_HOST}:${DB_PORT}" 2>/dev/null; then
+      echo "${GREEN}  ✓ Database port is open at ${DB_HOST}:${DB_PORT}${NC}"
+      sleep 3
       return 0
     fi
     RETRY=$((RETRY + 1))
@@ -44,17 +53,18 @@ wait_for_db() {
     sleep 2
   done
 
-  echo "${YELLOW}  ⚠ Could not verify database connection, proceeding anyway...${NC}"
+  echo "${YELLOW}  ⚠ Could not verify database connection after ${MAX_RETRIES} attempts${NC}"
+  echo "${YELLOW}    Proceeding anyway — app will retry on its own${NC}"
   return 0
 }
 
-# --- Run Drizzle migrations ---
+# --- Run database initialization ---
 run_migrations() {
-  echo "${YELLOW}[2/4] Running database migrations...${NC}"
-  
+  echo "${YELLOW}[2/4] Checking database schema...${NC}"
+
   if [ -d "/app/drizzle" ]; then
-    # Drizzle migrations are applied via the app startup
-    echo "${GREEN}  ✓ Migration files found, will be applied on startup${NC}"
+    echo "${GREEN}  ✓ Migration files found in /app/drizzle${NC}"
+    echo "  Schema will be applied by the application on first connection"
   else
     echo "${YELLOW}  ⚠ No migration directory found, skipping${NC}"
   fi
@@ -63,11 +73,11 @@ run_migrations() {
 # --- Check Ollama connectivity ---
 check_ollama() {
   echo "${YELLOW}[3/4] Checking Ollama connectivity...${NC}"
-  
+
   if [ -n "$OLLAMA_HOST" ]; then
-    if wget --spider --quiet --timeout=5 "${OLLAMA_HOST}/api/tags" 2>/dev/null; then
+    if wget -qO- --timeout=5 "${OLLAMA_HOST}/api/tags" > /dev/null 2>&1; then
       echo "${GREEN}  ✓ Ollama is reachable at ${OLLAMA_HOST}${NC}"
-      
+
       # List available models
       MODELS=$(wget -qO- --timeout=5 "${OLLAMA_HOST}/api/tags" 2>/dev/null | \
                sed -n 's/.*"name":"\([^"]*\)".*/\1/p' | head -5)
@@ -88,12 +98,12 @@ print_summary() {
   echo "${YELLOW}[4/4] Configuration summary:${NC}"
   echo "  App Port:     3000"
   echo "  Node Env:     ${NODE_ENV:-production}"
-  echo "  Database:     ${DB_HOST:-not set}:${DB_PORT:-3306}"
-  echo "  Ollama:       ${OLLAMA_HOST:-not configured}"
-  echo "  Hugo API:     ${HUGO_API_URL:-not configured}"
+  echo "  Database:     ${DB_HOST:-embedded}:${DB_PORT:-3306}"
+  echo "  Ollama:       ${OLLAMA_HOST:-not configured (using built-in AI)}"
+  echo "  Hugo API:     ${HUGO_API_URL:-not configured (set via chat)}"
   echo ""
   echo "${GREEN}╔══════════════════════════════════════════════╗${NC}"
-  echo "${GREEN}║   AI Admin Panel — Ready!                    ║${NC}"
+  echo "${GREEN}║   AI Blog Bot — Ready!                       ║${NC}"
   echo "${GREEN}╚══════════════════════════════════════════════╝${NC}"
 }
 

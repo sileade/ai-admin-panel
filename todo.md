@@ -91,3 +91,13 @@
 ## Bug Fixes
 - [x] Fix permission error (10002) — changed adminProcedure to protectedProcedure
 - [x] Fix permission error (10002) for conversation list query — promoted user to admin + relaxed access
+
+## Code Review & Testing (v3)
+- [x] Server code review: chat router, db helpers, schema
+- [x] Security review: input validation, SQL injection, XSS
+- [x] Client code review: Chat.tsx, UX, accessibility
+- [x] Docker review: Dockerfile, compose, scripts
+- [x] Fix all found issues (24/31 fixed, 7 low-priority remaining)
+- [x] Expanded vitest test coverage (42 tests, all passing)
+- [x] Integration tests for chat flow (lifecycle + multi-user isolation)
+- [x] Deliver code review report (CODE_REVIEW_REPORT.md)

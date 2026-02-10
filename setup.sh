@@ -260,10 +260,10 @@ configure_environment() {
     echo -e "${BOLD}External Database Configuration:${NC}"
     read -p "DATABASE_URL (mysql://user:pass@host:3306/db): " db_url
     if [ -n "$db_url" ]; then
-      echo "DATABASE_URL=${db_url}" >> .env
+      sed -i "s|DATABASE_URL=.*|DATABASE_URL=${db_url}|" .env
     fi
   else
-    echo "DATABASE_URL=mysql://ai_blog_bot:${MYSQL_PASS}@mysql:3306/ai_blog_bot" >> .env
+    sed -i "s|DATABASE_URL=.*|DATABASE_URL=mysql://ai_blog_bot:${MYSQL_PASS}@mysql:3306/ai_blog_bot|" .env
   fi
 
   log_success "Environment configured successfully"

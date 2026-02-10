@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import { generateImage } from "../_core/imageGeneration";
@@ -10,6 +11,29 @@ import {
   addChatMessage, getConversationMessages,
   createAiGeneration, updateAiGeneration,
 } from "../db";
+
+// ─── Constants ───
+const MAX_CONTEXT_MESSAGES = 20;
+const MAX_TOOL_ITERATIONS = 5;
+const MAX_MESSAGE_LENGTH = 10000;
+const FETCH_TIMEOUT_MS = 30000;
+
+// ─── Fetch with timeout helper ───
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── Escape LIKE wildcards for safe SQL search ───
+function escapeLikePattern(input: string): string {
+  return input.replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
 
 // ─── Tool definitions for the LLM ───
 const TOOLS_DEFINITION = [
@@ -51,11 +75,11 @@ const TOOLS_DEFINITION = [
         type: "object",
         properties: {
           title: { type: "string", description: "Заголовок статьи" },
-          content: { type: "string", description: "Содержимое статьи в формате Markdown" },
-          description: { type: "string", description: "SEO описание (макс 160 символов)" },
+          content: { type: "string", description: "Полное содержимое статьи в Markdown" },
+          description: { type: "string", description: "Краткое описание для SEO" },
           tags: { type: "string", description: "Теги через запятую" },
           categories: { type: "string", description: "Категории через запятую" },
-          draft: { type: "boolean", description: "Черновик (true) или опубликовать (false)" },
+          draft: { type: "boolean", description: "Черновик (true) или публикация (false)" },
         },
         required: ["title", "content"],
       },
@@ -65,17 +89,17 @@ const TOOLS_DEFINITION = [
     type: "function" as const,
     function: {
       name: "edit_article",
-      description: "Редактировать существующую статью на Hugo-блоге. Можно изменить заголовок, содержимое, теги и другие поля.",
+      description: "Редактировать существующую статью. Используй для обновления содержимого, заголовка, тегов.",
       parameters: {
         type: "object",
         properties: {
           filename: { type: "string", description: "Имя файла статьи для редактирования" },
           title: { type: "string", description: "Новый заголовок" },
           content: { type: "string", description: "Новое содержимое в Markdown" },
-          description: { type: "string", description: "Новое SEO описание" },
-          tags: { type: "string", description: "Новые теги через запятую" },
+          description: { type: "string", description: "Новое описание" },
+          tags: { type: "string", description: "Новые теги" },
           categories: { type: "string", description: "Новые категории" },
-          draft: { type: "boolean", description: "Статус черновика" },
+          draft: { type: "boolean", description: "Черновик или публикация" },
         },
         required: ["filename"],
       },
@@ -85,7 +109,7 @@ const TOOLS_DEFINITION = [
     type: "function" as const,
     function: {
       name: "delete_article",
-      description: "Удалить статью из Hugo-блога. ВНИМАНИЕ: действие необратимо.",
+      description: "Удалить статью из блога. ВНИМАНИЕ: действие необратимо.",
       parameters: {
         type: "object",
         properties: {
@@ -99,7 +123,7 @@ const TOOLS_DEFINITION = [
     type: "function" as const,
     function: {
       name: "sync_articles",
-      description: "Синхронизировать статьи из Hugo-блога в локальную базу данных. Используй для обновления списка статей.",
+      description: "Синхронизировать статьи с Hugo-блогом. Загружает все статьи из Hugo в локальную базу.",
       parameters: {
         type: "object",
         properties: {},
@@ -111,7 +135,7 @@ const TOOLS_DEFINITION = [
     type: "function" as const,
     function: {
       name: "get_stats",
-      description: "Получить статистику блога: общее количество статей, опубликованных и черновиков.",
+      description: "Получить статистику блога: количество статей, черновиков, опубликованных.",
       parameters: {
         type: "object",
         properties: {},
@@ -123,12 +147,12 @@ const TOOLS_DEFINITION = [
     type: "function" as const,
     function: {
       name: "search_images",
-      description: "Поиск бесплатных изображений в интернете (Unsplash/Pixabay). Используй для подбора иллюстраций к статьям.",
+      description: "Поиск бесплатных изображений в интернете по запросу. Возвращает ссылки и превью.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Поисковый запрос для изображений" },
-          count: { type: "number", description: "Количество результатов (по умолчанию 6)" },
+          query: { type: "string", description: "Поисковый запрос на английском" },
+          count: { type: "number", description: "Количество изображений (по умолчанию 6)" },
         },
         required: ["query"],
       },
@@ -138,12 +162,12 @@ const TOOLS_DEFINITION = [
     type: "function" as const,
     function: {
       name: "generate_image",
-      description: "Сгенерировать уникальное изображение с помощью AI по текстовому описанию. Используй для создания обложек и иллюстраций.",
+      description: "Сгенерировать уникальное AI-изображение по описанию. Подходит для обложек и иллюстраций.",
       parameters: {
         type: "object",
         properties: {
-          prompt: { type: "string", description: "Описание изображения для генерации (на английском для лучшего качества)" },
-          style: { type: "string", description: "Стиль: realistic, illustration, digital-art, anime, photo" },
+          prompt: { type: "string", description: "Описание изображения на английском" },
+          style: { type: "string", description: "Стиль: realistic, illustration, digital-art, watercolor" },
         },
         required: ["prompt"],
       },
@@ -182,19 +206,41 @@ const TOOLS_DEFINITION = [
   },
 ];
 
+// ─── Sanitize tool arguments from LLM ───
+function sanitizeToolArgs(args: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === "string") {
+      // Limit string length to prevent abuse
+      sanitized[key] = value.slice(0, 50000);
+    } else if (typeof value === "number") {
+      // Clamp numbers to reasonable ranges
+      sanitized[key] = Math.min(Math.max(value, 0), 1000);
+    } else if (typeof value === "boolean") {
+      sanitized[key] = value;
+    }
+    // Ignore other types (objects, arrays) from LLM
+  }
+  return sanitized;
+}
+
 // ─── Tool execution engine ───
 async function executeTool(name: string, args: Record<string, any>): Promise<{ result: string; metadata?: any }> {
+  // Sanitize all args from LLM
+  const safeArgs = sanitizeToolArgs(args);
+
   switch (name) {
     case "list_articles": {
-      const { items, total } = await getArticles({ search: args.search, limit: args.limit || 10 });
+      const searchTerm = safeArgs.search ? escapeLikePattern(safeArgs.search) : undefined;
+      const { items, total } = await getArticles({ search: searchTerm, limit: safeArgs.limit || 10 });
       if (items.length === 0) return { result: "Статьи не найдены. Попробуйте синхронизировать с Hugo командой или создать новую статью." };
       const list = items.map((a, i) => `${i + 1}. **${a.title}** (${a.filename}) — ${a.draft ? "черновик" : "опубликована"} | теги: ${a.tags || "нет"}`).join("\n");
       return { result: `Найдено ${total} статей:\n\n${list}`, metadata: { type: "articles", items } };
     }
 
     case "get_article": {
-      const article = await getArticleByFilename(args.filename);
-      if (!article) return { result: `Статья "${args.filename}" не найдена.` };
+      const article = await getArticleByFilename(safeArgs.filename);
+      if (!article) return { result: `Статья "${safeArgs.filename}" не найдена.` };
       return {
         result: `## ${article.title}\n\n**Файл:** ${article.filename}\n**Статус:** ${article.draft ? "Черновик" : "Опубликована"}\n**Теги:** ${article.tags || "нет"}\n**Категории:** ${article.categories || "нет"}\n**Описание:** ${article.description || "нет"}\n\n---\n\n${article.content || "(содержимое пусто)"}`,
         metadata: { type: "article", article },
@@ -204,55 +250,55 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
     case "create_article": {
       try {
         const { baseUrl, apiKey } = await getHugoConfig();
-        const res = await fetch(`${baseUrl}/api/posts/create`, {
+        const res = await fetchWithTimeout(`${baseUrl}/api/posts/create`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
           body: JSON.stringify({
-            title: args.title,
-            content: args.content,
-            description: args.description || "",
-            tags: args.tags || "",
-            categories: args.categories || "",
-            draft: args.draft ?? false,
+            title: safeArgs.title,
+            content: safeArgs.content,
+            description: safeArgs.description || "",
+            tags: safeArgs.tags || "",
+            categories: safeArgs.categories || "",
+            draft: safeArgs.draft ?? false,
           }),
         });
         if (!res.ok) throw new Error(`Hugo API: ${res.status}`);
         const data = await res.json();
         await upsertArticle({
-          filename: data.filename || data.slug || args.title.toLowerCase().replace(/\s+/g, "-"),
-          title: args.title,
+          filename: data.filename || data.slug || safeArgs.title.toLowerCase().replace(/\s+/g, "-"),
+          title: safeArgs.title,
           slug: data.slug,
-          description: args.description,
-          content: args.content,
-          tags: args.tags,
-          categories: args.categories,
-          draft: args.draft ?? false,
+          description: safeArgs.description,
+          content: safeArgs.content,
+          tags: safeArgs.tags,
+          categories: safeArgs.categories,
+          draft: safeArgs.draft ?? false,
           hugoUrl: data.url,
           syncedAt: new Date(),
         });
-        return { result: `Статья "${args.title}" успешно создана и опубликована на Hugo!${data.url ? `\n\nURL: ${data.url}` : ""}`, metadata: { type: "article_created", data } };
+        return { result: `Статья "${safeArgs.title}" успешно создана и опубликована на Hugo!${data.url ? `\n\nURL: ${data.url}` : ""}`, metadata: { type: "article_created", data } };
       } catch (e: any) {
         // Save locally even if Hugo fails
-        const filename = args.title.toLowerCase().replace(/[^a-zа-яё0-9]+/gi, "-").replace(/-+/g, "-");
+        const filename = (safeArgs.title || "untitled").toLowerCase().replace(/[^a-zа-яё0-9]+/gi, "-").replace(/-+/g, "-");
         await upsertArticle({
           filename,
-          title: args.title,
-          content: args.content,
-          description: args.description,
-          tags: args.tags,
-          categories: args.categories,
+          title: safeArgs.title || "Untitled",
+          content: safeArgs.content,
+          description: safeArgs.description,
+          tags: safeArgs.tags,
+          categories: safeArgs.categories,
           draft: true,
           syncedAt: new Date(),
         });
-        return { result: `Статья "${args.title}" сохранена локально как черновик. Ошибка Hugo API: ${e.message}. Настройте Hugo API в настройках для публикации.` };
+        return { result: `Статья "${safeArgs.title}" сохранена локально как черновик. Ошибка Hugo API: ${e.message}. Настройте Hugo API в настройках для публикации.` };
       }
     }
 
     case "edit_article": {
       try {
         const { baseUrl, apiKey } = await getHugoConfig();
-        const { filename, ...data } = args;
-        const res = await fetch(`${baseUrl}/api/posts/edit/${filename}`, {
+        const { filename, ...data } = safeArgs;
+        const res = await fetchWithTimeout(`${baseUrl}/api/posts/edit/${encodeURIComponent(filename)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
           body: JSON.stringify(data),
@@ -273,19 +319,19 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
         }
         return { result: `Статья "${filename}" успешно обновлена!` };
       } catch (e: any) {
-        return { result: `Ошибка при редактировании "${args.filename}": ${e.message}` };
+        return { result: `Ошибка при редактировании "${safeArgs.filename}": ${e.message}` };
       }
     }
 
     case "delete_article": {
       try {
         const { baseUrl, apiKey } = await getHugoConfig();
-        await fetch(`${baseUrl}/api/posts/delete/${args.filename}`, {
+        await fetchWithTimeout(`${baseUrl}/api/posts/delete/${encodeURIComponent(safeArgs.filename)}`, {
           method: "DELETE",
           headers: { "X-API-Key": apiKey },
         });
-        await deleteArticle(args.filename);
-        return { result: `Статья "${args.filename}" удалена.` };
+        await deleteArticle(safeArgs.filename);
+        return { result: `Статья "${safeArgs.filename}" удалена.` };
       } catch (e: any) {
         return { result: `Ошибка при удалении: ${e.message}` };
       }
@@ -294,7 +340,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
     case "sync_articles": {
       try {
         const { baseUrl, apiKey } = await getHugoConfig();
-        const res = await fetch(`${baseUrl}/api/posts/list`, {
+        const res = await fetchWithTimeout(`${baseUrl}/api/posts/list`, {
           headers: { "X-API-Key": apiKey },
         });
         if (!res.ok) throw new Error(`Hugo API: ${res.status}`);
@@ -324,37 +370,44 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
     case "get_stats": {
       const stats = await getArticleStats();
       return {
-        result: `📊 **Статистика блога:**\n\n- Всего статей: **${stats.total}**\n- Опубликовано: **${stats.published}**\n- Черновиков: **${stats.drafts}**`,
+        result: `**Статистика блога:**\n\n- Всего статей: **${stats.total}**\n- Опубликовано: **${stats.published}**\n- Черновиков: **${stats.drafts}**`,
         metadata: { type: "stats", stats },
       };
     }
 
     case "search_images": {
       try {
-        const count = args.count || 6;
-        const res = await fetch(
-          `https://api.unsplash.com/search/photos?query=${encodeURIComponent(args.query)}&per_page=${count}`,
-          { headers: { Authorization: "Client-ID 0_gL1FMO0V0OaEjttg7oZ_8ZLDWdYjPmPbRisTezXSo" } }
-        );
-        if (!res.ok) throw new Error("Unsplash API error");
-        const data = await res.json();
-        const images = data.results.map((img: any) => ({
-          url: img.urls.regular,
-          thumb: img.urls.thumb,
-          small: img.urls.small,
-          description: img.description || img.alt_description || "",
-          author: img.user.name,
-          markdown: `![${img.alt_description || args.query}](${img.urls.regular})`,
-        }));
-        const list = images.map((img: any, i: number) => `${i + 1}. ${img.description || "Изображение"} — автор: ${img.author}`).join("\n");
-        return {
-          result: `Найдено изображений по запросу "${args.query}":\n\n${list}\n\nДля вставки в статью используйте Markdown-код изображения.`,
-          metadata: { type: "images", images },
-        };
-      } catch {
-        try {
-          const res = await fetch(
-            `https://pixabay.com/api/?key=47566229-0e5c1f3b4e4b0c6d8f9a2e1d3&q=${encodeURIComponent(args.query)}&per_page=${args.count || 6}&image_type=photo`
+        const count = Math.min(safeArgs.count || 6, 20);
+        // Use built-in image generation service for search via generateImage
+        // Fallback: use Unsplash with key from settings
+        const unsplashKey = await getSetting("unsplash_api_key");
+        const pixabayKey = await getSetting("pixabay_api_key");
+
+        if (unsplashKey) {
+          const res = await fetchWithTimeout(
+            `https://api.unsplash.com/search/photos?query=${encodeURIComponent(safeArgs.query)}&per_page=${count}`,
+            { headers: { Authorization: `Client-ID ${unsplashKey}` } }
+          );
+          if (!res.ok) throw new Error("Unsplash API error");
+          const data = await res.json();
+          const images = data.results.map((img: any) => ({
+            url: img.urls.regular,
+            thumb: img.urls.thumb,
+            small: img.urls.small,
+            description: img.description || img.alt_description || "",
+            author: img.user.name,
+            markdown: `![${img.alt_description || safeArgs.query}](${img.urls.regular})`,
+          }));
+          const list = images.map((img: any, i: number) => `${i + 1}. ${img.description || "Изображение"} — автор: ${img.author}`).join("\n");
+          return {
+            result: `Найдено изображений по запросу "${safeArgs.query}":\n\n${list}\n\nДля вставки в статью используйте Markdown-код изображения.`,
+            metadata: { type: "images", images },
+          };
+        }
+
+        if (pixabayKey) {
+          const res = await fetchWithTimeout(
+            `https://pixabay.com/api/?key=${pixabayKey}&q=${encodeURIComponent(safeArgs.query)}&per_page=${count}&image_type=photo`
           );
           if (!res.ok) throw new Error("Pixabay error");
           const data = await res.json();
@@ -368,19 +421,24 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
           }));
           const list = images.map((img: any, i: number) => `${i + 1}. ${img.description} — автор: ${img.author}`).join("\n");
           return { result: `Найдено изображений:\n\n${list}`, metadata: { type: "images", images } };
-        } catch {
-          return { result: "Не удалось найти изображения. Попробуйте другой запрос." };
         }
+
+        // No API keys configured — suggest setup
+        return {
+          result: `Для поиска изображений необходимо настроить API-ключ. Скажите:\n- "Сохрани настройку unsplash_api_key: YOUR_KEY" для Unsplash\n- "Сохрани настройку pixabay_api_key: YOUR_KEY" для Pixabay\n\nИли используйте генерацию AI-изображений командой "Сгенерируй изображение..."`,
+        };
+      } catch (e: any) {
+        return { result: `Ошибка поиска изображений: ${e.message}. Попробуйте другой запрос или проверьте API-ключи в настройках.` };
       }
     }
 
     case "generate_image": {
       try {
-        const fullPrompt = args.style ? `${args.prompt}, ${args.style} style` : args.prompt;
+        const fullPrompt = safeArgs.style ? `${safeArgs.prompt}, ${safeArgs.style} style` : safeArgs.prompt;
         const { url } = await generateImage({ prompt: fullPrompt });
         return {
-          result: `Изображение сгенерировано!\n\n![${args.prompt}](${url})\n\nMarkdown для вставки: \`![описание](${url})\``,
-          metadata: { type: "generated_image", url, prompt: args.prompt },
+          result: `Изображение сгенерировано!\n\n![${safeArgs.prompt}](${url})\n\nMarkdown для вставки: \`![описание](${url})\``,
+          metadata: { type: "generated_image", url, prompt: safeArgs.prompt },
         };
       } catch (e: any) {
         return { result: `Ошибка генерации изображения: ${e.message}` };
@@ -393,19 +451,21 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
       const llmEndpoint = await getSetting("llm_endpoint") ?? "не настроен";
       const llmModel = await getSetting("llm_model") ?? "не настроена";
       const useLocal = await getSetting("llm_use_local") ?? "false";
+      const unsplashKey = await getSetting("unsplash_api_key");
+      const pixabayKey = await getSetting("pixabay_api_key");
       return {
-        result: `**Текущие настройки:**\n\n**Hugo API:**\n- URL: ${hugoUrl}\n- API Key: ${hugoKey ? "настроен (***" + hugoKey.slice(-4) + ")" : "не настроен"}\n\n**LLM:**\n- Endpoint: ${llmEndpoint}\n- Модель: ${llmModel}\n- Локальная модель: ${useLocal === "true" ? "включена" : "выключена"}`,
+        result: `**Текущие настройки:**\n\n**Hugo API:**\n- URL: ${hugoUrl}\n- API Key: ${hugoKey ? "настроен" : "не настроен"}\n\n**LLM:**\n- Endpoint: ${llmEndpoint}\n- Модель: ${llmModel}\n- Локальная модель: ${useLocal === "true" ? "включена" : "выключена"}\n\n**Изображения:**\n- Unsplash: ${unsplashKey ? "настроен" : "не настроен"}\n- Pixabay: ${pixabayKey ? "настроен" : "не настроен"}`,
       };
     }
 
     case "save_settings": {
       const saved: string[] = [];
-      if (args.hugo_base_url) { await setSetting("hugo_base_url", args.hugo_base_url); saved.push("Hugo URL"); }
-      if (args.hugo_api_key) { await setSetting("hugo_api_key", args.hugo_api_key); saved.push("Hugo API Key"); }
-      if (args.llm_endpoint) { await setSetting("llm_endpoint", args.llm_endpoint); saved.push("LLM Endpoint"); }
-      if (args.llm_model) { await setSetting("llm_model", args.llm_model); saved.push("LLM Model"); }
-      if (args.llm_api_key) { await setSetting("llm_api_key", args.llm_api_key); saved.push("LLM API Key"); }
-      if (args.llm_use_local !== undefined) { await setSetting("llm_use_local", args.llm_use_local ? "true" : "false"); saved.push("Use Local LLM"); }
+      if (safeArgs.hugo_base_url) { await setSetting("hugo_base_url", safeArgs.hugo_base_url); saved.push("Hugo URL"); }
+      if (safeArgs.hugo_api_key) { await setSetting("hugo_api_key", safeArgs.hugo_api_key); saved.push("Hugo API Key"); }
+      if (safeArgs.llm_endpoint) { await setSetting("llm_endpoint", safeArgs.llm_endpoint); saved.push("LLM Endpoint"); }
+      if (safeArgs.llm_model) { await setSetting("llm_model", safeArgs.llm_model); saved.push("LLM Model"); }
+      if (safeArgs.llm_api_key) { await setSetting("llm_api_key", safeArgs.llm_api_key); saved.push("LLM API Key"); }
+      if (safeArgs.llm_use_local !== undefined) { await setSetting("llm_use_local", safeArgs.llm_use_local ? "true" : "false"); saved.push("Use Local LLM"); }
       return { result: saved.length > 0 ? `Настройки обновлены: ${saved.join(", ")}` : "Нет данных для сохранения." };
     }
 
@@ -424,7 +484,7 @@ async function getHugoConfig() {
 
 // ─── LLM caller with local/built-in fallback ───
 async function callLLM(
-  messages: Array<{ role: string; content: string }>,
+  messages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: any[] }>,
   options?: { tools?: any[]; tool_choice?: "none" | "auto" | "required" }
 ): Promise<any> {
   const useLocal = await getSetting("llm_use_local");
@@ -442,26 +502,36 @@ async function callLLM(
     };
     if (options?.tools) { body.tools = options.tools; body.tool_choice = options.tool_choice || "auto"; }
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(localApiKey ? { Authorization: `Bearer ${localApiKey}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      console.warn(`[LLM] Local model error ${res.status}: ${text}, falling back to built-in`);
-      // Fall through to built-in
-    } else {
-      return res.json();
+    try {
+      const res = await fetchWithTimeout(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(localApiKey ? { Authorization: `Bearer ${localApiKey}` } : {}),
+        },
+        body: JSON.stringify(body),
+      }, 60000); // 60s timeout for LLM
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        console.warn(`[LLM] Local model error ${res.status}: ${text}, falling back to built-in`);
+        // Fall through to built-in
+      } else {
+        return res.json();
+      }
+    } catch (e: any) {
+      console.warn(`[LLM] Local model connection failed: ${e.message}, falling back to built-in`);
     }
   }
 
   // Built-in Manus LLM
   return invokeLLM({
-    messages: messages.map(m => ({ role: m.role as any, content: m.content })),
+    messages: messages.map(m => ({
+      role: m.role as any,
+      content: m.content,
+      ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+    })),
     ...(options?.tools ? { tools: options.tools, tool_choice: (options.tool_choice || "auto") as "auto" } : {}),
   });
 }
@@ -487,6 +557,14 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент для управлени�
 - Будь кратким в ответах, но информативным
 - При генерации статей учитывай контекст существующих статей блога`;
 
+// ─── Ownership verification helper ───
+async function verifyConversationOwnership(conversationId: number, userId: number): Promise<void> {
+  const conv = await getConversation(conversationId);
+  if (!conv || conv.userId !== userId) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Чат не найден" });
+  }
+}
+
 // ─── Main chat router ───
 export const chatRouter = router({
   // Conversation management
@@ -503,7 +581,9 @@ export const chatRouter = router({
 
   getConversation: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
+      // Verify ownership
+      await verifyConversationOwnership(input.id, ctx.user.id);
       const conv = await getConversation(input.id);
       const messages = await getConversationMessages(input.id);
       return { conversation: conv, messages };
@@ -511,14 +591,16 @@ export const chatRouter = router({
 
   deleteConversation: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await verifyConversationOwnership(input.id, ctx.user.id);
       await deleteConversation(input.id);
       return { success: true };
     }),
 
   renameConversation: protectedProcedure
     .input(z.object({ id: z.number(), title: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await verifyConversationOwnership(input.id, ctx.user.id);
       await updateConversationTitle(input.id, input.title);
       return { success: true };
     }),
@@ -527,9 +609,12 @@ export const chatRouter = router({
   sendMessage: protectedProcedure
     .input(z.object({
       conversationId: z.number(),
-      message: z.string().min(1),
+      message: z.string().min(1).max(MAX_MESSAGE_LENGTH),
     }))
     .mutation(async ({ ctx, input }) => {
+      // Verify ownership
+      await verifyConversationOwnership(input.conversationId, ctx.user.id);
+
       // Save user message
       await addChatMessage({
         conversationId: input.conversationId,
@@ -539,12 +624,12 @@ export const chatRouter = router({
 
       // Get conversation history
       const history = await getConversationMessages(input.conversationId);
-      const llmMessages: Array<{ role: string; content: string }> = [
+      const llmMessages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: any[] }> = [
         { role: "system", content: SYSTEM_PROMPT },
       ];
 
-      // Add history (last 20 messages for context window)
-      const recentHistory = history.slice(-20);
+      // Add history (last N messages for context window)
+      const recentHistory = history.slice(-MAX_CONTEXT_MESSAGES);
       for (const msg of recentHistory) {
         if (msg.role === "user" || msg.role === "assistant") {
           llmMessages.push({ role: msg.role, content: msg.content });
@@ -556,10 +641,9 @@ export const chatRouter = router({
       let toolResults: Array<{ name: string; result: string; metadata?: any }> = [];
       let finalContent = "";
       let iterations = 0;
-      const MAX_ITERATIONS = 5;
 
       try {
-        while (iterations < MAX_ITERATIONS) {
+        while (iterations < MAX_TOOL_ITERATIONS) {
           iterations++;
           response = await callLLM(llmMessages, {
             tools: TOOLS_DEFINITION,
@@ -573,10 +657,11 @@ export const chatRouter = router({
 
           // Check for tool calls
           if (message.tool_calls && message.tool_calls.length > 0) {
-            // Add assistant message with tool calls to context
+            // Add assistant message with tool_calls to context (proper OpenAI format)
             llmMessages.push({
               role: "assistant",
               content: message.content || "",
+              tool_calls: message.tool_calls,
             });
 
             for (const toolCall of message.tool_calls) {
@@ -600,10 +685,11 @@ export const chatRouter = router({
                 metadata: toolResult.metadata ? JSON.stringify(toolResult.metadata) : undefined,
               });
 
-              // Add tool result to LLM context
+              // Add tool result to LLM context with tool_call_id (proper OpenAI format)
               llmMessages.push({
-                role: "tool" as any,
+                role: "tool",
                 content: toolResult.result,
+                tool_call_id: toolCall.id,
               });
             }
 
