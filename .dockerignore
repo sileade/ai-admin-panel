@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+client/dist/
+
+# Docker
+docker/nginx/ssl/
+backups/
+
+# Development
+.git/
+.gitignore
+.env
+.env.*
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+.manus-logs/
+
+# Tests
+coverage/
+*.test.ts
+
+# Misc
+notes.md
+todo.md
+screenshots/

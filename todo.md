@@ -54,3 +54,19 @@
 - [x] DashboardLayout with sidebar navigation
 - [x] Vitest tests for backend procedures
 - [x] GitHub repository creation with README
+
+## Docker Deployment
+- [x] Multi-stage Dockerfile (build + production)
+- [x] docker-compose.yml with MySQL + app + Nginx
+- [x] .env.example with all required variables
+- [x] Auto-setup script (setup.sh) — one-command deployment
+- [x] Nginx reverse proxy config with SSL support
+- [x] Health checks for all services
+- [x] Wait-for-db script for startup ordering
+- [x] .dockerignore for optimized builds
+- [x] Ollama remote connection configuration
+- [x] Docker profiles (light/balanced/full)
+- [x] Auto-migration on startup
+- [x] Backup script for database
+- [x] Update README with Docker deployment guide
+- [ ] Push updated code to GitHub (in progress)
