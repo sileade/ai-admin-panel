@@ -1,55 +1,41 @@
-# AI Blog Bot
+# AI Blog Bot — Telegram-бот для управления Hugo-блогом
 
-**Чат-бот для управления Hugo-блогом с AI-возможностями.**
-
-Единый диалоговый интерфейс для полного управления контентом: создание и редактирование статей, поиск и генерация изображений, SEO-оптимизация — всё через чат с AI-ассистентом. Подключается к внешнему Ollama-серверу на отдельной VM для работы с локальными LLM.
-
----
+Telegram-бот с AI-движком для полного управления Hugo-блогом: создание и редактирование статей, поиск и генерация изображений, SEO-оптимизация — всё через диалог в Telegram. Подключается к внешнему Ollama-серверу на отдельной VM для работы с локальными LLM.
 
 ## Возможности
 
 | Функция | Описание |
 |---------|----------|
-| **Управление статьями** | Список, создание, редактирование, удаление статей через Hugo REST API |
+| **Управление статьями** | Просмотр, создание, редактирование и удаление статей через Hugo REST API |
 | **AI-генерация статей** | Полное написание статей по теме с учётом контекста существующих публикаций |
-| **AI-редактирование** | Улучшение, переписывание, дополнение существующего контента |
-| **Поиск изображений** | Поиск изображений в интернете с превью и вставкой в статьи |
-| **AI-генерация изображений** | Создание обложек и иллюстраций по текстовому описанию |
-| **SEO-оптимизация** | Генерация мета-описаний, тегов, заголовков |
-| **Управление настройками** | Конфигурация Hugo API и LLM через чат |
-| **История разговоров** | Сохранение и управление историей чатов |
-| **Локальные LLM** | Подключение к Ollama/LM Studio через OpenAI-совместимый API |
-
----
+| **AI-редактирование** | Улучшение, переписывание и расширение существующего контента |
+| **SEO-оптимизация** | Автоматическая генерация мета-описаний, тегов, заголовков |
+| **Поиск изображений** | Поиск бесплатных фотографий в интернете с превью прямо в чате |
+| **Генерация изображений** | Создание уникальных обложек и иллюстраций через AI |
+| **Синхронизация с Hugo** | Двусторонняя синхронизация статей с Hugo-блогом |
+| **Настройки через чат** | Конфигурация Hugo API и LLM прямо в Telegram |
+| **Ограничение доступа** | Whitelist по Telegram user ID |
 
 ## Архитектура
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Ваш браузер                       │
-│              Чат-интерфейс (React)                  │
-└──────────────────────┬──────────────────────────────┘
-                       │ tRPC
-┌──────────────────────▼──────────────────────────────┐
-│              AI Blog Bot Server                      │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
-│  │ Chat     │  │ Hugo API │  │ Image Search /   │  │
-│  │ Router   │  │ Proxy    │  │ Generation       │  │
-│  └────┬─────┘  └──────────┘  └──────────────────┘  │
-│       │                                              │
-│  ┌────▼─────────────────────────────────────────┐   │
-│  │  LLM Tool-Calling Engine                      │   │
-│  │  (System prompt + 8 tools)                    │   │
-│  └────┬─────────────────────────────────────────┘   │
-└───────┼─────────────────────────────────────────────┘
-        │
-   ┌────▼────┐    ┌──────────┐    ┌──────────────┐
-   │ Ollama  │    │  MySQL   │    │  Hugo Blog   │
-   │ (VM 2)  │    │  (DB)    │    │  (REST API)  │
-   └─────────┘    └──────────┘    └──────────────┘
+┌─────────────────┐     ┌──────────────────────────────┐     ┌─────────────────┐
+│   Telegram App   │────▶│    AI Blog Bot (Node.js)      │────▶│   Hugo Blog     │
+│   (Пользователь) │◀────│                                │◀────│   (REST API)    │
+└─────────────────┘     │  ┌────────────┐ ┌───────────┐  │     └─────────────────┘
+                        │  │ grammy Bot │ │ LLM Engine│  │
+                        │  └────────────┘ └───────────┘  │     ┌─────────────────┐
+                        │  ┌────────────┐ ┌───────────┐  │────▶│   Ollama VM     │
+                        │  │ Tool Calls │ │ Image Gen │  │◀────│   (Local LLM)   │
+                        │  └────────────┘ └───────────┘  │     └─────────────────┘
+                        │  ┌────────────────────────────┐│
+                        │  │       MySQL Database       ││     ┌─────────────────┐
+                        │  └────────────────────────────┘│────▶│   Unsplash API  │
+                        └──────────────────────────────┘     │   (Изображения)  │
+                                                              └─────────────────┘
 ```
 
-### Схема развёртывания
+### Схема развёртывания (две VM)
 
 ```
 ┌──────────────────────────┐     ┌──────────────────────────┐
@@ -72,94 +58,129 @@
 
 | Инструмент | Назначение |
 |------------|------------|
-| `list_articles` | Получить список статей блога |
+| `list_articles` | Получить список статей блога с поиском |
 | `get_article` | Получить полное содержимое статьи |
 | `create_article` | Создать новую статью в Hugo |
-| `update_article` | Обновить существующую статью |
+| `edit_article` | Обновить существующую статью |
+| `delete_article` | Удалить статью |
+| `sync_articles` | Синхронизировать с Hugo |
+| `get_stats` | Статистика блога |
 | `search_images` | Поиск изображений в интернете |
 | `generate_image` | Генерация изображения по описанию |
-| `get_blog_stats` | Статистика блога |
-| `get_settings` | Текущие настройки системы |
-
----
+| `get_settings` / `save_settings` | Управление настройками |
 
 ## Быстрый старт
 
-### Вариант 1: Автоматическая установка (рекомендуется)
+### Предварительные требования
+
+- Docker и Docker Compose
+- Telegram-аккаунт
+- Ollama на отдельной VM (опционально)
+
+### 1. Создание Telegram-бота
+
+1. Откройте Telegram и найдите **@BotFather**
+2. Отправьте `/newbot`
+3. Следуйте инструкциям — задайте имя и username бота
+4. Скопируйте полученный **токен** (формат: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+### 2. Автоматическая установка (рекомендуется)
 
 ```bash
 git clone https://github.com/sileade/ai-admin-panel.git
 cd ai-admin-panel
+chmod +x setup.sh
 
-# Запустить автоустановку с указанием IP Ollama-сервера
-./setup.sh --auto --ollama 192.168.1.100
+# Полностью автоматический режим
+./setup.sh --auto --telegram <ВАШ_ТОКЕН> --ollama <IP_OLLAMA_VM>
+
+# Или интерактивный режим
+./setup.sh
 ```
 
-### Вариант 2: Ручная установка
+### 3. Ручная установка
 
 ```bash
 git clone https://github.com/sileade/ai-admin-panel.git
 cd ai-admin-panel
 
-# Скопировать и отредактировать конфигурацию
+# Скопировать и настроить .env
 cp docker/env.example .env
-nano .env
+nano .env  # Заполнить TELEGRAM_BOT_TOKEN и другие параметры
 
 # Запустить
 docker compose --profile balanced up -d --build
 ```
 
-### Вариант 3: Интерактивная установка
+### 4. Проверка
 
 ```bash
-git clone https://github.com/sileade/ai-admin-panel.git
-cd ai-admin-panel
-./setup.sh
+# Статус контейнеров
+docker compose ps
+
+# Логи бота
+docker compose logs -f app
+# Должно появиться: [TG Bot] Running as @ваш_бот_username
 ```
 
-Скрипт пошагово проведёт через настройку: выбор профиля, конфигурация Ollama, Hugo API и базы данных.
+Откройте Telegram, найдите вашего бота и отправьте `/start`.
 
----
+## Команды бота
 
-## Настройка Ollama на отдельной VM
+| Команда | Описание |
+|---------|----------|
+| `/start` | Главное меню с кнопками быстрого доступа |
+| `/articles` | Список статей блога |
+| `/stats` | Статистика блога |
+| `/sync` | Синхронизация с Hugo |
+| `/settings` | Текущие настройки |
+| `/new` | Очистить контекст разговора |
+| `/help` | Справка по командам |
 
-### Автоматическая установка
+Помимо команд, бот понимает **естественный язык**. Примеры:
 
-На VM, где будет работать Ollama:
+- *«Покажи последние 5 статей»*
+- *«Напиши статью про искусственный интеллект в медицине»*
+- *«Улучши текст статьи about-us.md»*
+- *«Найди изображения для статьи о космосе»*
+- *«Сгенерируй обложку для блога в стиле digital art»*
+- *«Оптимизируй SEO для статьи my-post.md»*
+- *«Настрой Hugo API на https://admin.example.com с ключом abc123»*
+
+Также можно отправить **фотографию** с подписью — бот обработает изображение.
+
+## Настройка Ollama (отдельная VM)
+
+### Автоматическая настройка
+
+На машине с Ollama:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sileade/ai-admin-panel/main/docker/setup-ollama-remote.sh | bash
+scp docker/setup-ollama-remote.sh user@ollama-vm:~/
+ssh user@ollama-vm
+chmod +x setup-ollama-remote.sh
+./setup-ollama-remote.sh
 ```
 
-Скрипт автоматически установит Ollama, настроит приём удалённых подключений (`OLLAMA_HOST=0.0.0.0:11434`), скачает модель `llama3.2`, настроит systemd-сервис и выведет параметры подключения.
-
-### Ручная установка
+### Ручная настройка
 
 ```bash
-# Установить Ollama
+# Установка Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# Настроить удалённый доступ
-sudo mkdir -p /etc/systemd/system/ollama.service.d
-sudo tee /etc/systemd/system/ollama.service.d/override.conf << 'EOF'
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0:11434"
-Environment="OLLAMA_ORIGINS=*"
-EOF
-
-# Перезапустить и скачать модель
-sudo systemctl daemon-reload
-sudo systemctl restart ollama
+# Скачать модель
 ollama pull llama3.2
 
-# Открыть порт
-sudo ufw allow 11434/tcp
-```
+# Разрешить внешние подключения
+sudo systemctl edit ollama.service
+# Добавить:
+# [Service]
+# Environment="OLLAMA_HOST=0.0.0.0:11434"
 
-### Проверка подключения
+sudo systemctl restart ollama
 
-```bash
-curl http://<OLLAMA_IP>:11434/api/tags
+# Проверить
+curl http://localhost:11434/api/tags
 ```
 
 ### Рекомендуемые модели
@@ -172,9 +193,7 @@ curl http://<OLLAMA_IP>:11434/api/tags
 | `qwen2.5:14b` | 10 GB | Отличная для русского языка |
 | `gemma2:9b` | 6 GB | Сбалансированная |
 
----
-
-## Профили развёртывания
+## Профили Docker Compose
 
 | Профиль | Компоненты | RAM | Когда использовать |
 |---------|-----------|-----|-------------------|
@@ -183,136 +202,98 @@ curl http://<OLLAMA_IP>:11434/api/tags
 | `full` | Приложение + MySQL + Nginx | ~768 MB | Продакшн с SSL |
 
 ```bash
-docker compose --profile light up -d
 docker compose --profile balanced up -d
-docker compose --profile full up -d
 ```
 
----
+## Переменные окружения
 
-## Использование
+### Обязательные
 
-### Примеры команд чата
+| Переменная | Описание |
+|-----------|----------|
+| `TELEGRAM_BOT_TOKEN` | Токен от @BotFather |
+| `DATABASE_URL` | MySQL connection string |
+| `JWT_SECRET` | Секрет для JWT (генерируется setup.sh) |
 
-**Управление статьями:**
-```
-> Покажи список статей
-> Покажи статистику блога
-> Покажи статью "Введение в Docker"
-> Создай статью про машинное обучение в 2025 году
-> Отредактируй статью #5 — добавь раздел про безопасность
-```
+### Опциональные
 
-**AI-генерация:**
-```
-> Напиши статью про AI в 2025 году
-> Напиши SEO-оптимизированную статью про Kubernetes
-> Перепиши статью #3 в более профессиональном стиле
-> Добавь в статью #7 раздел про мониторинг
-```
-
-**Изображения:**
-```
-> Найди изображения для статьи о технологиях
-> Сгенерируй обложку для блога о программировании
-> Создай иллюстрацию: минималистичный сервер в облаках
-```
-
-**Настройки:**
-```
-> Покажи текущие настройки
-> Измени модель на qwen2.5:14b
-```
-
----
-
-## Конфигурация
-
-### Переменные окружения
-
-| Переменная | Описание | По умолчанию |
-|------------|----------|-------------|
-| `APP_PORT` | Порт приложения | `3000` |
-| `OLLAMA_HOST` | URL Ollama-сервера | — |
-| `OLLAMA_MODEL` | Модель для генерации | `llama3.2` |
-| `HUGO_API_URL` | URL Hugo admin API | `https://admin.nodkeys.com` |
-| `HUGO_API_KEY` | API-ключ Hugo | — |
-| `MYSQL_ROOT_PASSWORD` | Пароль root MySQL | генерируется |
-| `MYSQL_DATABASE` | Имя базы данных | `ai_blog_bot` |
-| `MYSQL_USER` | Пользователь MySQL | `ai_blog_bot` |
-| `MYSQL_PASSWORD` | Пароль MySQL | генерируется |
-| `JWT_SECRET` | Секрет для JWT-токенов | генерируется |
-
----
+| Переменная | По умолчанию | Описание |
+|-----------|-------------|----------|
+| `TELEGRAM_ALLOWED_USERS` | *(пусто = все)* | ID пользователей через запятую |
+| `OLLAMA_HOST` | *(пусто)* | URL Ollama сервера (`http://IP:11434`) |
+| `OLLAMA_MODEL` | `llama3.2` | Модель Ollama |
+| `HUGO_API_URL` | *(пусто)* | URL Hugo Admin API |
+| `HUGO_API_KEY` | *(пусто)* | API-ключ Hugo |
+| `APP_PORT` | `3000` | Порт приложения |
+| `MYSQL_PORT` | `3306` | Порт MySQL |
 
 ## Управление
 
-### Полезные команды
+### Логи
 
 ```bash
-docker compose ps                    # Статус сервисов
-docker compose logs -f app           # Логи приложения
-docker compose restart app           # Перезапуск
-docker compose down                  # Остановка
-docker compose down -v               # Остановка с удалением данных
+docker compose logs -f          # Все логи
+docker compose logs -f app      # Только бот
+docker compose logs -f mysql    # Только БД
 ```
 
 ### Бэкап и восстановление
 
 ```bash
-./docker/backup.sh                   # Создать бэкап
-./docker/backup.sh /path/to/backups  # Бэкап в директорию
-./docker/restore.sh backups/ai_blog_bot_20240101_120000.sql.gz  # Восстановить
+./docker/backup.sh                                              # Создать бэкап
+./docker/restore.sh backups/ai-blog-bot-2025-01-15-120000.sql.gz  # Восстановить
 ```
 
 ### Обновление
 
 ```bash
-./docker/update.sh                   # Автоматическое обновление
+./docker/update.sh
 ```
 
-### Настройка SSL (профиль full)
+### Остановка
 
 ```bash
-cp fullchain.pem docker/nginx/ssl/
-cp privkey.pem docker/nginx/ssl/
-# Раскомментировать HTTPS-блок в docker/nginx/nginx.conf
-docker compose restart nginx
+docker compose down       # Остановить
+docker compose down -v    # Остановить и удалить данные
 ```
 
----
+## Безопасность
+
+- **Ограничение доступа**: `TELEGRAM_ALLOWED_USERS` — whitelist по Telegram user ID
+- **MySQL**: Привязан к `127.0.0.1`, недоступен извне
+- **Секреты**: Генерируются автоматически через `openssl rand`
+- **Ресурсы**: Лимиты памяти для каждого контейнера
+- **Логи**: Ротация (max 20MB для приложения)
+- **Санитизация**: Все аргументы LLM tool-calls проходят валидацию
 
 ## Структура проекта
 
 ```
 ai-admin-panel/
-├── client/                 # React фронтенд
-│   └── src/pages/
-│       ├── Chat.tsx        # Основной чат-интерфейс
-│       └── Home.tsx        # Точка входа
-├── server/                 # Express + tRPC бэкенд
-│   ├── routers/
-│   │   └── chat.ts        # Чат-роутер с AI tool-calling
-│   ├── routers.ts          # Главный роутер
-│   └── db.ts               # Запросы к БД
+├── server/
+│   ├── telegram-bot.ts     # Telegram-бот с tool-calling движком (877 строк)
+│   ├── db.ts               # Хелперы базы данных
+│   ├── routers.ts          # tRPC роутеры (минимальный веб-сервер)
+│   ├── storage.ts          # S3 хелперы
+│   └── _core/              # Ядро: LLM, OAuth, env, image generation
 ├── drizzle/
-│   └── schema.ts           # Схема базы данных
-├── docker/                 # Docker-инфраструктура
-│   ├── mysql/init.sql      # Инициализация БД
-│   ├── nginx/nginx.conf    # Конфигурация Nginx
+│   └── schema.ts           # Схема БД (articles, settings, chat_messages)
+├── client/
+│   └── src/pages/Home.tsx  # Минимальная лендинг-страница
+├── docker/
 │   ├── entrypoint.sh       # Точка входа контейнера
 │   ├── env.example         # Шаблон переменных окружения
+│   ├── mysql/init.sql      # Инициализация БД
+│   ├── nginx/nginx.conf    # Конфиг Nginx
 │   ├── backup.sh           # Скрипт бэкапа
 │   ├── restore.sh          # Скрипт восстановления
 │   ├── update.sh           # Скрипт обновления
-│   └── setup-ollama-remote.sh  # Установка Ollama на VM
-├── docker-compose.yml      # Docker Compose конфигурация
-├── Dockerfile              # Сборка приложения
+│   └── setup-ollama-remote.sh  # Настройка Ollama на VM
+├── Dockerfile              # Multi-stage сборка
+├── docker-compose.yml      # Docker Compose с профилями
 ├── setup.sh                # Автоматический установщик
 └── README.md
 ```
-
----
 
 ## Системные требования
 
@@ -324,34 +305,28 @@ ai-admin-panel/
 | RAM | 512 MB | 1 GB |
 | Диск | 2 GB | 5 GB |
 | ОС | Ubuntu 20.04+ | Ubuntu 22.04 |
-| Docker | 20.10+ | 24.0+ |
 
 ### Сервер Ollama (отдельная VM)
 
-| Параметр | Минимум (7B модели) | Рекомендуется (14B+) |
-|----------|--------------------|--------------------|
+| Параметр | Минимум (7B) | Рекомендуется (14B+) |
+|----------|-------------|---------------------|
 | CPU | 4 vCPU | 8 vCPU |
 | RAM | 8 GB | 16 GB |
 | GPU | Не обязательно | NVIDIA 8GB+ VRAM |
 | Диск | 10 GB | 50 GB |
 
----
-
-## Технологический стек
+## Технологии
 
 | Компонент | Технология |
 |-----------|-----------|
-| Frontend | React 19, TypeScript, Tailwind CSS 4, shadcn/ui |
-| Backend | Express 4, tRPC 11, SuperJSON |
-| Database | MySQL 8 (Drizzle ORM) |
-| AI/LLM | OpenAI-compatible API (Ollama, LM Studio) |
-| Images | AI Image Generation, Web Search |
-| Auth | Manus OAuth |
-| Testing | Vitest |
+| Telegram Bot | grammy (современный Telegram Bot Framework) |
+| Backend | Node.js 22, Express 4, tRPC 11, TypeScript |
+| AI/LLM | OpenAI-совместимый API, Ollama |
+| Database | MySQL 8, Drizzle ORM |
+| Images | AI Image Generation, Unsplash |
+| Testing | Vitest (18+ тестов) |
 | Deploy | Docker Compose, Nginx |
-
----
 
 ## Лицензия
 
-MIT License
+MIT

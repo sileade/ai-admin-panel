@@ -44,12 +44,14 @@ log_step()    { echo -e "\n${BOLD}${CYAN}━━━ $1 ━━━${NC}\n"; }
 PROFILE=""
 AUTO_MODE=false
 OLLAMA_IP=""
+TELEGRAM_TOKEN=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --profile)    PROFILE="$2"; shift 2 ;;
     --auto)       AUTO_MODE=true; shift ;;
     --ollama)     OLLAMA_IP="$2"; shift 2 ;;
+    --telegram)   TELEGRAM_TOKEN="$2"; shift 2 ;;
     --help|-h)
       echo "Usage: ./setup.sh [OPTIONS]"
       echo ""
@@ -57,11 +59,13 @@ while [[ $# -gt 0 ]]; do
       echo "  --profile <name>   Set profile: light, balanced, full"
       echo "  --auto             Non-interactive mode with defaults"
       echo "  --ollama <ip>      Ollama server address (e.g., 192.168.1.100)"
+      echo "  --telegram <token> Telegram bot token from @BotFather"
       echo "  --help             Show this help"
       echo ""
       echo "Examples:"
       echo "  ./setup.sh --auto --ollama 192.168.1.100"
       echo "  ./setup.sh --profile full --ollama 10.0.0.5:11434"
+      echo "  ./setup.sh --auto --telegram 123456:ABC-DEF --ollama 192.168.1.100"
       exit 0
       ;;
     *) log_error "Unknown option: $1"; exit 1 ;;
@@ -202,6 +206,37 @@ configure_environment() {
 
   log_success "Generated secure JWT secret"
   log_success "Generated secure database passwords"
+
+  # Configure Telegram Bot
+  if [ -n "$TELEGRAM_TOKEN" ]; then
+    sed -i "s|TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TELEGRAM_TOKEN}|" .env
+    log_success "Telegram bot token configured from --telegram flag"
+  elif [ "$AUTO_MODE" = false ]; then
+    echo ""
+    echo -e "${BOLD}Telegram Bot Configuration:${NC}"
+    echo "  Get a bot token from @BotFather in Telegram."
+    echo "  1. Open Telegram and search for @BotFather"
+    echo "  2. Send /newbot and follow the instructions"
+    echo "  3. Copy the token and paste it here"
+    echo ""
+    read -p "Telegram Bot Token: " tg_token
+    if [ -n "$tg_token" ]; then
+      sed -i "s|TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${tg_token}|" .env
+      log_success "Telegram bot token configured"
+    else
+      log_warn "No Telegram token provided. Bot will not start."
+      log_info "Set TELEGRAM_BOT_TOKEN in .env later."
+    fi
+
+    echo ""
+    echo "  Optional: Restrict bot access to specific Telegram user IDs."
+    echo "  Get your ID from @userinfobot. Leave empty to allow everyone."
+    read -p "Allowed user IDs (comma-separated, or empty): " tg_users
+    if [ -n "$tg_users" ]; then
+      sed -i "s|TELEGRAM_ALLOWED_USERS=.*|TELEGRAM_ALLOWED_USERS=${tg_users}|" .env
+      log_success "Allowed users configured"
+    fi
+  fi
 
   # Configure Ollama
   if [ -n "$OLLAMA_IP" ]; then
@@ -375,18 +410,19 @@ print_summary() {
   echo -e "  ${BOLD}Profile:${NC}      ${PROFILE}"
   echo ""
   echo -e "  ${BOLD}How to use:${NC}"
-  echo -e "    1. Open http://localhost:${APP_PORT} in your browser"
-  echo -e "    2. Log in with your account"
+  echo -e "    1. Open Telegram and find your bot"
+  echo -e "    2. Send /start to get the main menu"
   echo -e "    3. Start chatting with the AI Blog Bot!"
   echo -e "    4. Try: 'Покажи список статей' or 'Напиши статью про AI'"
   echo ""
-  echo -e "  ${BOLD}Chat commands:${NC}"
-  echo -e "    - Article management: list, create, edit, delete articles"
-  echo -e "    - AI writing: generate full articles by topic"
-  echo -e "    - AI editing: improve, rewrite existing content"
-  echo -e "    - Image search: find images for articles"
-  echo -e "    - Image generation: create covers and illustrations"
-  echo -e "    - Settings: configure Hugo API and LLM via chat"
+  echo -e "  ${BOLD}Telegram Bot commands:${NC}"
+  echo -e "    /start    - Main menu with buttons"
+  echo -e "    /articles - List blog articles"
+  echo -e "    /stats    - Blog statistics"
+  echo -e "    /sync     - Sync with Hugo"
+  echo -e "    /settings - Current settings"
+  echo -e "    /new      - New conversation context"
+  echo -e "    Or just type any message in natural language!"
   echo ""
   echo -e "  ${BOLD}Useful commands:${NC}"
   echo -e "    Logs:     docker compose logs -f app"

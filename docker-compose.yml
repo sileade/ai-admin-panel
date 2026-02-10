@@ -91,6 +91,9 @@ services:
       VITE_FRONTEND_FORGE_API_URL: ${VITE_FRONTEND_FORGE_API_URL:-}
       VITE_APP_TITLE: ${VITE_APP_TITLE:-AI Blog Bot}
       VITE_APP_LOGO: ${VITE_APP_LOGO:-}
+      # ─── Telegram Bot ───
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required - get from @BotFather}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
       # ─── Ollama / Local LLM (external VM) ───
       OLLAMA_HOST: ${OLLAMA_HOST:-}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}

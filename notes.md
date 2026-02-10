@@ -42,3 +42,12 @@
 - Message input field with Enter/Shift+Enter hint
 - TypeScript: No errors, LSP: No errors, Dependencies: OK
 - All 42 vitest tests passing
+
+## Screenshot 4 - Telegram Bot Landing Page (v4 Redesign)
+- Hero: "AI Blog Bot" title, "Telegram Bot" badge, Russian description
+- "Открыть в Telegram" button (blue, prominent)
+- Dark theme with gradient background (blue-purple)
+- "Возможности" section visible below fold
+- Server: "[TG Bot] TELEGRAM_BOT_TOKEN not set, bot disabled" — expected
+- TypeScript: No errors, LSP: No errors, Dependencies: OK
+- 18 vitest tests passing

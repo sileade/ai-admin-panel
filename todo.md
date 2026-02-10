@@ -101,3 +101,22 @@
 - [x] Expanded vitest test coverage (42 tests, all passing)
 - [x] Integration tests for chat flow (lifecycle + multi-user isolation)
 - [x] Deliver code review report (CODE_REVIEW_REPORT.md)
+
+## Telegram Bot Redesign (v4)
+- [x] Remove React frontend entirely (replaced with minimal landing page)
+- [x] Install grammy for Telegram integration
+- [x] Create Telegram bot with commands: /start, /help, /articles, /new, /settings, /stats, /sync
+- [x] Integrate LLM tool-calling engine (reused from chat router)
+- [x] Hugo API tools: list, create, edit, delete articles
+- [x] AI tools: generate article, edit article, optimize SEO
+- [x] Image tools: search images, generate images
+- [x] Settings management via bot commands
+- [x] Conversation context/history per Telegram user
+- [x] Inline keyboard buttons for article actions
+- [x] Markdown formatting for article previews in Telegram
+- [x] Image sending directly in Telegram chat
+- [x] TELEGRAM_BOT_TOKEN env var configured
+- [x] Update Docker Compose with Telegram env vars and --telegram flag in setup.sh
+- [x] Update README for Telegram bot version
+- [x] Write vitest tests for bot logic (18 tests passing)
+- [ ] Push to GitHub (in progress)

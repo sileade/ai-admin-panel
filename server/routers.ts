@@ -2,7 +2,6 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
-import { chatRouter } from "./routers/chat";
 
 export const appRouter = router({
   system: systemRouter,
@@ -14,7 +13,8 @@ export const appRouter = router({
       return { success: true } as const;
     }),
   }),
-  chat: chatRouter,
+  // All bot functionality is handled via Telegram (server/telegram-bot.ts)
+  // The web UI is a minimal landing page directing users to the Telegram bot
 });
 
 export type AppRouter = typeof appRouter;
