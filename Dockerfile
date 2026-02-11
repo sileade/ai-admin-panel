@@ -1,5 +1,5 @@
 # ============================================================
-# AI Admin Panel — Multi-stage Production Dockerfile
+# AI Blog Bot — Multi-stage Production Dockerfile
 # ============================================================
 # Stage 1: Install dependencies
 # Stage 2: Build frontend + backend
@@ -15,7 +15,7 @@ RUN corepack enable && corepack prepare pnpm@10.4.1 --activate
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
-COPY patches/ ./patches/
+COPY patches/ ./patches/ 2>/dev/null || true
 
 # Install all dependencies (including dev for build)
 RUN pnpm install --frozen-lockfile 2>/dev/null || pnpm install
@@ -41,14 +41,17 @@ FROM node:22-alpine AS production
 WORKDIR /app
 
 LABEL maintainer="sileade"
-LABEL description="AI Admin Panel — CMS with AI assistant for Hugo blog"
-LABEL version="1.0.0"
+LABEL description="AI Blog Bot — Telegram bot for Hugo blog management with AI"
+LABEL version="2.0.0"
+
+# Install system dependencies (netcat for TCP health checks)
+RUN apk add --no-cache netcat-openbsd
 
 RUN corepack enable && corepack prepare pnpm@10.4.1 --activate
 
 # Install only production dependencies
 COPY package.json pnpm-lock.yaml ./
-COPY patches/ ./patches/
+COPY patches/ ./patches/ 2>/dev/null || true
 RUN pnpm install --prod --frozen-lockfile 2>/dev/null || pnpm install --prod
 
 # Copy built artifacts
@@ -62,7 +65,7 @@ COPY --from=builder /app/drizzle ./drizzle
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Create non-root user
+# Create non-root user and switch
 RUN addgroup -g 1001 -S appgroup && \
     adduser -S appuser -u 1001 -G appgroup
 

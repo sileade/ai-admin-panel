@@ -259,7 +259,8 @@ configure_environment() {
       if [[ "$ollama_input" != http* ]]; then
         ollama_input="http://${ollama_input}"
       fi
-      if [[ "$ollama_input" != *:114* ]]; then
+      # Add default port if no port specified after hostname
+      if [[ "$ollama_input" =~ ^https?://[^:]+$ ]]; then
         ollama_input="${ollama_input}:11434"
       fi
       sed -i "s|OLLAMA_HOST=.*|OLLAMA_HOST=${ollama_input}|" .env

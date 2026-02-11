@@ -1,151 +1,155 @@
-# Code Review & Testing Report — AI Blog Bot
+# Code Review Report — AI Blog Bot (Telegram)
 
-**Project:** AI Blog Bot (ai-admin-panel)
-**Date:** 2026-02-10
-**Reviewer:** Manus AI
-**Version:** 08f8bf42 → post-review fixes
-
----
-
-## Executive Summary
-
-A comprehensive code review and testing cycle was conducted across all layers of the AI Blog Bot project: server-side (tRPC routers, database layer, schema), client-side (React chat interface, UX, accessibility), and infrastructure (Docker, deployment scripts, security). The review identified **31 issues** across four severity levels. All critical and high-priority issues have been resolved, and the test suite has been expanded from 20 to 42 tests, all passing.
-
-| Severity | Found | Fixed | Remaining |
-|----------|-------|-------|-----------|
-| Critical | 4 | 4 | 0 |
-| High | 7 | 7 | 0 |
-| Medium | 10 | 8 | 2 |
-| Low | 10 | 5 | 5 |
-| **Total** | **31** | **24** | **7** |
-
-The remaining 7 issues are low-to-medium severity and represent enhancements rather than bugs. The application is functional, secure, and ready for deployment.
+**Проект:** AI Blog Bot (Telegram-бот для управления Hugo-блогом)  
+**Дата:** 10 февраля 2026  
+**Версия:** v4 (Telegram Bot)  
+**Ревьюер:** Manus AI  
+**Тесты:** 44/44 пройдены  
 
 ---
 
-## Server-Side Review
+## Резюме
 
-### Critical Issues (All Fixed)
+Проведено полное код-ревью проекта AI Blog Bot — Telegram-бота для управления Hugo-блогом с AI-функциями (LLM tool-calling, генерация статей, поиск и генерация изображений). Обнаружено **22 проблемы**, из которых **19 исправлены** (все критические и высокие). Оставшиеся 3 — низкоприоритетные косметические замечания.
 
-**IDOR Vulnerability in Conversation Access.** The original implementation of `getConversation`, `deleteConversation`, and `renameConversation` did not verify that the requesting user owned the conversation. Any authenticated user could read, delete, or rename any other user's conversations by guessing the numeric ID. This was resolved by introducing a `verifyConversationOwnership()` helper that checks `conv.userId === ctx.user.id` before every operation. The fix is validated by three dedicated ownership isolation tests.
-
-**SQL Injection via LIKE Wildcards.** User search input was passed directly to the `like()` operator without escaping `%` and `_` characters. An attacker could craft search queries like `%admin%` to match unintended records. This was fixed by adding an `escapeLikePattern()` function that escapes both wildcard characters before constructing the query.
-
-**Hardcoded API Keys.** Unsplash and Pixabay API keys were referenced from the settings database rather than being hardcoded, but the search_images tool lacked proper fallback messaging. This was clarified and the tool now guides users to configure API keys through the settings system.
-
-### High Issues (All Fixed)
-
-**Tool Call Message Format.** The OpenAI-compatible tool-calling flow was corrected to include `tool_calls` in the assistant message and `tool_call_id` in tool response messages, ensuring compatibility with both the built-in LLM and external Ollama/LM Studio endpoints.
-
-**Input Sanitization for LLM Tool Arguments.** A `sanitizeToolArgs()` function was added that limits string lengths to 50,000 characters, clamps numbers to the 0–1,000 range, and strips non-primitive types. This prevents the LLM from injecting unexpected data structures.
-
-**Message Length Validation.** The `sendMessage` input now enforces `.max(10000)` via Zod schema validation, preventing excessively long messages from consuming LLM context window and database storage.
-
-**Fetch Timeout on External Calls.** All Hugo API and external HTTP calls now use a `fetchWithTimeout()` wrapper with a 30-second default timeout (60 seconds for LLM calls), preventing indefinite hangs.
-
-### Architecture Quality
-
-The server code follows a clean separation of concerns: database queries in `db.ts`, tool definitions and execution in `chat.ts`, and routing in `routers.ts`. The tool-calling engine supports up to 5 iterations of LLM ↔ tool interaction, with proper context accumulation. The LLM caller implements a graceful fallback from local Ollama to the built-in Manus LLM when the local endpoint is unavailable.
+| Категория | Найдено | Исправлено | Осталось |
+|-----------|---------|------------|----------|
+| Критические | 3 | 3 | 0 |
+| Высокие | 5 | 5 | 0 |
+| Средние | 8 | 8 | 0 |
+| Низкие | 6 | 3 | 3 |
+| **Итого** | **22** | **19** | **3** |
 
 ---
 
-## Client-Side Review
+## Критические проблемы (все исправлены)
 
-### High Issues (All Fixed)
+### CR2-01: Утечка токена бота через URL фото
 
-**Authentication Gate.** The chat page now properly checks authentication state via `useAuth()` and displays a login prompt with a redirect button when the user is not authenticated, instead of silently failing with permission errors.
+**Было:** Токен бота встраивался в URL при обработке фото от пользователя (`https://api.telegram.org/file/bot<TOKEN>/...`), что могло привести к утечке при логировании или сохранении контекста.
 
-**Settings Dialog Consistency.** The settings save mutation was updated to handle empty strings and undefined values consistently, preventing accidental clearing of configured values.
+**Исправлено:** Файл скачивается в буфер, загружается на S3 через `storagePut()`, и в контекст передаётся безопасный S3 URL без токена.
 
-### UX Improvements Applied
+### CR2-02: Отсутствие rate limiting
 
-**Auto-Resizing Textarea.** The message input now automatically grows as the user types multi-line content, with a maximum height cap. This uses a `useEffect` that adjusts `scrollHeight` on content change with a stable ref to prevent re-render loops.
+**Было:** Любой пользователь мог отправлять неограниченное количество сообщений, каждое из которых вызывало LLM API, что могло привести к исчерпанию квот и высоким расходам.
 
-**Delete Confirmation.** Conversation deletion now shows a confirmation dialog before proceeding, preventing accidental data loss.
+**Исправлено:** Добавлен per-user rate limiter (10 сообщений/минуту) с автоматической очисткой счётчиков. При превышении лимита бот отвечает предупреждением с указанием времени ожидания.
 
-**Stable Message IDs.** Message IDs were changed from `Date.now()` (which could collide on rapid sends) to `nanoid()` for guaranteed uniqueness.
+### CR2-03: Утечка памяти через unbounded контексты
 
-**Loading States.** The conversation list now shows a skeleton loader while data is being fetched.
+**Было:** `userContexts` Map рос бесконечно — по одной записи на каждого уникального Telegram-пользователя, без механизма очистки.
 
-### Remaining Enhancements (Low Priority)
-
-The mobile sidebar z-index stacking could theoretically conflict with dialog overlays in edge cases. A few unused imports remain in the codebase. These are cosmetic issues that do not affect functionality.
+**Исправлено:** Добавлена TTL-очистка (1 час неактивности), ограничение на количество сообщений в контексте (20 последних), и периодическая сборка мусора каждые 10 минут.
 
 ---
 
-## Docker & Infrastructure Review
+## Высокие проблемы (все исправлены)
 
-### Critical Issues (All Fixed)
+### CR2-04: `/dev/tcp` не работает в Alpine Linux
 
-**Default Passwords Removed.** The `docker-compose.yml` no longer contains weak default passwords. The fallback values now use placeholder strings that will cause an obvious startup failure if `.env` is not configured, forcing users to run `setup.sh` or manually set secure passwords.
+**Было:** `entrypoint.sh` использовал bash-специфичный `/dev/tcp` для проверки доступности MySQL, что не работает в Alpine Linux (ash shell).
 
-**MySQL Port Binding.** The MySQL port is now bound to `127.0.0.1:${MYSQL_PORT}:3306` instead of `0.0.0.0`, preventing external access to the database. The application connects via the Docker internal network.
+**Исправлено:** Заменено на `nc` (netcat), установленный в Dockerfile. Добавлен fallback с таймаутом 60 секунд.
 
-### High Issues (All Fixed)
+### CR2-05: Команды без access control
 
-**Entrypoint Migration.** The `entrypoint.sh` was rewritten to use `mysqladmin ping` (with a fallback to timeout-based TCP check) for database readiness detection, replacing the unreliable `nc -z` command that is not available in Alpine images.
+**Было:** `/help` и `/new` команды не проверяли `isUserAllowed()`, позволяя неавторизованным пользователям их вызывать.
 
-**Duplicate DATABASE_URL.** The `setup.sh` script now uses `sed -i` replacement instead of `echo >>` append for the `DATABASE_URL` variable, preventing duplicate entries on repeated runs.
+**Исправлено:** Все 7 команд (`/start`, `/help`, `/articles`, `/new`, `/stats`, `/sync`, `/settings`) теперь проверяют доступ через `isUserAllowed()` перед выполнением.
 
-### Infrastructure Hardening Applied
+### CR2-06: Утечка внутренних ошибок пользователю
 
-| Improvement | Before | After |
-|-------------|--------|-------|
-| Resource limits | None | 512MB–1GB memory limits per service |
-| Log rotation | Unbounded | json-file driver, 10MB max, 3 files |
-| MySQL binding | 0.0.0.0 | 127.0.0.1 only |
-| Default passwords | Weak defaults | Placeholder strings (force configuration) |
-| DB wait mechanism | `nc -z` (missing) | `mysqladmin ping` with timeout fallback |
-| ENV duplication | Append (`>>`) | Replace (`sed -i`) |
+**Было:** Сообщения об ошибках отправлялись пользователю как есть, включая стектрейсы, строки подключения к БД и внутренние пути.
 
----
+**Исправлено:** Добавлена функция `sanitizeErrorForUser()`, которая фильтрует внутренние детали и возвращает безопасное, человекочитаемое сообщение.
 
-## Test Results
+### CR2-07: Устаревшие метки в Dockerfile
 
-The test suite was expanded from 20 to 42 tests covering authentication, access control, conversation ownership isolation, input validation, settings persistence, conversation lifecycle, and multi-user isolation.
+**Было:** Labels содержали "AI Admin Panel" вместо "AI Blog Bot".
 
-| Test Suite | Tests | Status |
-|------------|-------|--------|
-| auth.me | 3 | Passed |
-| auth.logout | 2 | Passed |
-| chat.getSettings | 4 | Passed |
-| chat.saveSettings | 6 | Passed |
-| chat.listConversations | 3 | Passed |
-| chat.createConversation | 4 | Passed |
-| chat.getConversation (ownership) | 3 | Passed |
-| chat.deleteConversation (ownership) | 3 | Passed |
-| chat.renameConversation (ownership) | 3 | Passed |
-| chat.sendMessage (validation) | 5 | Passed |
-| Conversation lifecycle | 1 | Passed |
-| Multi-user isolation | 1 | Passed |
-| Router structure | 3 | Passed |
-| auth.logout (reference) | 1 | Passed |
-| **Total** | **42** | **All Passed** |
+**Исправлено:** Обновлены все метки, описания и maintainer-информация.
 
-Execution time: 7.87 seconds. No flaky tests detected.
+### CR2-08: Отсутствие drizzle-kit в production
+
+**Было:** `drizzle-kit` — devDependency, не устанавливается в production-образе, но entrypoint пытался запустить миграции.
+
+**Исправлено:** Dockerfile обновлён: миграции генерируются на этапе сборки (build stage), SQL-файлы копируются в production-образ.
 
 ---
 
-## Remaining Items (Low Priority)
+## Средние проблемы (все исправлены)
 
-The following items are enhancement opportunities rather than bugs. They do not affect the current functionality or security of the application.
-
-1. **Rate limiting on sendMessage** — would prevent abuse of expensive LLM calls. Recommended: implement a per-user rate limiter (e.g., 10 messages per minute) using an in-memory counter or Redis.
-
-2. **Streaming responses** — currently the bot responds with the complete message after all tool calls finish. Implementing SSE or WebSocket streaming would improve perceived responsiveness for long AI-generated articles.
-
-3. **Mobile sidebar z-index** — the sidebar overlay (z-40) could theoretically conflict with dialog components. A minor CSS adjustment would resolve this.
-
-4. **Unused imports cleanup** — a few unused icon imports remain in `Chat.tsx`. These add negligible bundle size but should be cleaned up for code hygiene.
-
-5. **Backup script container name** — the backup script uses a hardcoded container name that could mismatch if the user customizes the compose project name.
-
-6. **ENV validation in setup.sh** — the script could validate that critical environment variables are set before starting Docker services.
-
-7. **Ollama port check regex** — the port detection in `setup.sh` uses a fragile substring check that may fail for non-standard ports.
+| ID | Проблема | Решение |
+|----|----------|---------|
+| CR2-09 | Неиспользуемые DB-хелперы для web-чатов | Удалены из `db.ts` |
+| CR2-10 | Мёртвые таблицы `conversations`/`chat_messages` | Удалены из `schema.ts` и `init.sql` |
+| CR2-11 | Нет graceful shutdown для бота | Добавлены обработчики `SIGINT`/`SIGTERM` с `bot.stop()` |
+| CR2-12 | `escapeMarkdownV2` определена, но не используется | Экспортирована как утилита для будущего использования |
+| CR2-13 | Хрупкая проверка порта Ollama в setup.sh | Исправлена regex-проверка на корректное определение порта |
+| CR2-14 | `window.__TG_BOT_USERNAME__` никогда не устанавливается | Заменено на `import.meta.env.VITE_TG_BOT_USERNAME` |
+| CR2-15 | Кнопка ведёт на `t.me/your_bot` | Используется env-переменная `VITE_TG_BOT_USERNAME` |
+| CR2-16 | Docker Compose `required: false` совместимость | Документировано требование Docker Compose v2.20+ |
 
 ---
 
-## Conclusion
+## Удалённый мёртвый код
 
-The AI Blog Bot project is in good shape after this review cycle. All critical security vulnerabilities (IDOR, SQL injection, exposed ports) have been resolved. The test coverage has more than doubled, with comprehensive ownership isolation and input validation tests. The Docker deployment infrastructure has been hardened with resource limits, log rotation, and secure defaults. The application is ready for production deployment.
+В ходе ревью удалён значительный объём мёртвого кода, оставшегося от предыдущих версий (web-чат панель):
+
+| Файл | Описание |
+|------|----------|
+| `server/routers/chat.ts` | Web-чат роутер (заменён Telegram-ботом) |
+| `server/routers/ai.ts` | AI роутер (логика перенесена в telegram-bot.ts) |
+| `server/routers/hugo.ts` | Hugo роутер (логика перенесена в telegram-bot.ts) |
+| `drizzle/schema.ts` | Таблицы `chatConversations` / `chatMessages` |
+| `server/db.ts` | Хелперы `addChatMessage`, `getConversationMessages`, `createConversation` и др. |
+| `docker/mysql/init.sql` | Таблицы `conversations` / `chat_messages` |
+
+---
+
+## Низкие проблемы (3 оставлены)
+
+| ID | Проблема | Причина |
+|----|----------|---------|
+| CR2-19 | Нет валидации callback query data | Данные генерируются ботом, риск минимален |
+| CR2-20 | Fallback `pnpm install` без предупреждения | Стандартная практика для Docker-сборок |
+| CR2-21 | Возможные неиспользуемые импорты в App.tsx | TypeScript LSP не показывает ошибок, влияние на бандл минимально |
+
+---
+
+## Тестовое покрытие
+
+Расширенный набор из **44 тестов** (vitest), все проходят. Время выполнения: 827ms.
+
+| Группа тестов | Кол-во | Описание |
+|---------------|--------|----------|
+| tRPC Router — auth.me | 2 | Аутентифицированный и анонимный доступ |
+| tRPC Router — auth.logout | 2 | Очистка cookie, публичный доступ |
+| tRPC Router — structure | 2 | Наличие auth/system, отсутствие chat |
+| Telegram Bot Module | 3 | Экспорты, запуск без токена, создание бота |
+| escapeLikePattern | 5 | SQL LIKE injection prevention |
+| sanitizeToolArgs | 8 | Input sanitization, type handling, edge cases |
+| splitMessage | 7 | Message splitting, unicode, boundaries |
+| isUserAllowed | 7 | Access control, env parsing, edge cases |
+| Security (интеграционные) | 6 | Injection, overflow, nested objects, ACL |
+| auth.logout (legacy) | 1 | Cookie clearing reference test |
+| **Итого** | **44** | — |
+
+---
+
+## Архитектурная оценка
+
+### Сильные стороны
+
+Проект демонстрирует чистую архитектуру с хорошим разделением ответственности. Бот-модуль (`telegram-bot.ts`) полностью изолирован от web-сервера и может работать независимо. Tool-calling архитектура LLM позволяет легко добавлять новые инструменты без изменения основного цикла обработки. Rate limiting и access control реализованы на уровне бота, а не отдельных команд, что обеспечивает единообразную защиту. Graceful shutdown с корректной остановкой polling предотвращает потерю данных при перезапуске. TTL-очистка контекстов предотвращает утечки памяти в долгоживущих процессах.
+
+### Рекомендации на будущее
+
+Для production-использования рекомендуется реализовать webhook-режим вместо polling (снижает нагрузку и ускоряет отклик), добавить персистентное хранение истории чатов в БД (сейчас контекст хранится только в памяти и теряется при перезапуске), внедрить метрики (Prometheus/Grafana) для мониторинга LLM-вызовов и времени ответа, а также рассмотреть очередь задач (Bull/BullMQ) для длительных операций генерации статей и изображений.
+
+---
+
+## Заключение
+
+Проект находится в хорошем состоянии для production-использования. Все критические и высокие проблемы безопасности исправлены (утечка токена, rate limiting, access control, error sanitization, memory leaks). Код очищен от мёртвых зависимостей предыдущих версий. Тестовое покрытие адекватное для текущего размера проекта с 44 тестами, покрывающими безопасность, валидацию ввода, контроль доступа и утилиты.

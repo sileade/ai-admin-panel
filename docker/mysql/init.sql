@@ -6,7 +6,7 @@
 SET NAMES utf8mb4;
 SET CHARACTER SET utf8mb4;
 
--- Core user table
+-- Core user table (for web landing page auth)
 CREATE TABLE IF NOT EXISTS `users` (
   `id` int NOT NULL AUTO_INCREMENT,
   `openId` varchar(64) NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   UNIQUE KEY `users_openId_unique` (`openId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Key-value settings
+-- Key-value settings (Hugo API URL/key, Ollama config, etc.)
 CREATE TABLE IF NOT EXISTS `settings` (
   `id` int NOT NULL AUTO_INCREMENT,
   `key` varchar(128) NOT NULL,
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS `articles` (
 CREATE TABLE IF NOT EXISTS `ai_generations` (
   `id` int NOT NULL AUTO_INCREMENT,
   `userId` int NOT NULL,
-  `type` enum('article_generate','article_edit','image_generate','seo_optimize','assistant') NOT NULL,
+  `type` enum('article_generate','article_edit','image_generate','seo_optimize','assistant','chat') NOT NULL,
   `prompt` text NOT NULL,
   `result` text,
   `model` varchar(256) DEFAULT NULL,
@@ -66,29 +66,4 @@ CREATE TABLE IF NOT EXISTS `ai_generations` (
   KEY `idx_ai_gen_user` (`userId`),
   KEY `idx_ai_gen_type` (`type`),
   KEY `idx_ai_gen_created` (`createdAt`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Chat conversations
-CREATE TABLE IF NOT EXISTS `conversations` (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `userId` int NOT NULL,
-  `title` varchar(256) NOT NULL DEFAULT 'Новый чат',
-  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_conv_user` (`userId`),
-  KEY `idx_conv_updated` (`updatedAt`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Chat messages
-CREATE TABLE IF NOT EXISTS `chat_messages` (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `conversationId` int NOT NULL,
-  `role` enum('user','assistant','system') NOT NULL,
-  `content` text NOT NULL,
-  `metadata` text,
-  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_msg_conv` (`conversationId`),
-  KEY `idx_msg_created` (`createdAt`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

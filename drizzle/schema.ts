@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean, json } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -61,30 +61,3 @@ export const aiGenerations = mysqlTable("ai_generations", {
 
 export type AiGeneration = typeof aiGenerations.$inferSelect;
 export type InsertAiGeneration = typeof aiGenerations.$inferInsert;
-
-// Chat conversations
-export const chatConversations = mysqlTable("chat_conversations", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  title: varchar("title", { length: 512 }).default("Новый чат"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type ChatConversation = typeof chatConversations.$inferSelect;
-export type InsertChatConversation = typeof chatConversations.$inferInsert;
-
-// Chat messages within conversations
-export const chatMessages = mysqlTable("chat_messages", {
-  id: int("id").autoincrement().primaryKey(),
-  conversationId: int("conversationId").notNull(),
-  role: mysqlEnum("role", ["user", "assistant", "system", "tool"]).notNull(),
-  content: text("content").notNull(),
-  toolName: varchar("toolName", { length: 128 }),
-  toolResult: text("toolResult"),
-  metadata: text("metadata"), // JSON string for images, article data, etc.
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
-
-export type ChatMessage = typeof chatMessages.$inferSelect;
-export type InsertChatMessage = typeof chatMessages.$inferInsert;

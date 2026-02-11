@@ -35,16 +35,10 @@ wait_for_db() {
   RETRY=0
 
   while [ $RETRY -lt $MAX_RETRIES ]; do
-    # Use /dev/tcp emulation via timeout+sh or wget to check TCP port
-    if (echo > /dev/tcp/${DB_HOST}/${DB_PORT}) 2>/dev/null; then
+    # Use netcat for TCP port checking (Alpine-compatible)
+    if nc -z -w 2 "${DB_HOST}" "${DB_PORT}" 2>/dev/null; then
       echo "${GREEN}  ✓ Database is reachable at ${DB_HOST}:${DB_PORT}${NC}"
       # Wait a bit more for MySQL to be fully ready
-      sleep 3
-      return 0
-    fi
-    # Fallback: try wget to any port (will fail fast if port closed)
-    if wget --spider --quiet --timeout=2 "http://${DB_HOST}:${DB_PORT}" 2>/dev/null; then
-      echo "${GREEN}  ✓ Database port is open at ${DB_HOST}:${DB_PORT}${NC}"
       sleep 3
       return 0
     fi

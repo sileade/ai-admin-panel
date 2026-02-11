@@ -1,12 +1,10 @@
-import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
+import { Bot, Context, InlineKeyboard } from "grammy";
 import { invokeLLM } from "./_core/llm";
 import { generateImage } from "./_core/imageGeneration";
+import { storagePut } from "./storage";
 import {
   getSetting, setSetting, getArticles, getArticleByFilename,
   upsertArticle, deleteArticle, getArticleStats,
-  addChatMessage, getConversationMessages,
-  createConversation, getConversations, getConversation,
-  updateConversationTitle, deleteConversation,
 } from "./db";
 
 // ─── Constants ───
@@ -14,6 +12,10 @@ const MAX_CONTEXT_MESSAGES = 20;
 const MAX_TOOL_ITERATIONS = 5;
 const FETCH_TIMEOUT_MS = 30000;
 const TG_MAX_MESSAGE_LENGTH = 4000;
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX_MESSAGES = 10; // max messages per window
+const CONTEXT_TTL_MS = 60 * 60 * 1000; // 1 hour
+const MAX_CACHED_USERS = 500;
 
 // ─── Fetch with timeout ───
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
@@ -27,28 +29,24 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
 }
 
 // ─── Escape LIKE wildcards ───
-function escapeLikePattern(input: string): string {
+export function escapeLikePattern(input: string): string {
   return input.replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
 // ─── Sanitize tool arguments from LLM ───
-function sanitizeToolArgs(args: Record<string, any>): Record<string, any> {
+export function sanitizeToolArgs(args: Record<string, any>): Record<string, any> {
   const sanitized: Record<string, any> = {};
   for (const [key, value] of Object.entries(args)) {
     if (typeof value === "string") sanitized[key] = value.slice(0, 50000);
     else if (typeof value === "number") sanitized[key] = Math.min(Math.max(value, 0), 1000);
     else if (typeof value === "boolean") sanitized[key] = value;
+    // Ignore arrays, objects, etc. for safety
   }
   return sanitized;
 }
 
-// ─── Escape Telegram MarkdownV2 ───
-function escapeMarkdownV2(text: string): string {
-  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
-}
-
 // ─── Split long messages for Telegram ───
-function splitMessage(text: string, maxLen = TG_MAX_MESSAGE_LENGTH): string[] {
+export function splitMessage(text: string, maxLen = TG_MAX_MESSAGE_LENGTH): string[] {
   if (text.length <= maxLen) return [text];
   const parts: string[] = [];
   let remaining = text;
@@ -57,13 +55,115 @@ function splitMessage(text: string, maxLen = TG_MAX_MESSAGE_LENGTH): string[] {
       parts.push(remaining);
       break;
     }
-    // Try to split at newline
     let splitIdx = remaining.lastIndexOf("\n", maxLen);
     if (splitIdx < maxLen * 0.3) splitIdx = maxLen;
     parts.push(remaining.slice(0, splitIdx));
     remaining = remaining.slice(splitIdx);
   }
   return parts;
+}
+
+// ─── Sanitize error messages before sending to user ───
+function sanitizeErrorForUser(error: any): string {
+  const msg = error?.message || "Неизвестная ошибка";
+  // Strip sensitive info: connection strings, file paths, stack traces
+  const sanitized = msg
+    .replace(/mysql:\/\/[^\s]+/gi, "[DB_URL]")
+    .replace(/\/home\/[^\s]+/g, "[PATH]")
+    .replace(/at\s+\S+\s+\(\S+:\d+:\d+\)/g, "")
+    .replace(/Bearer\s+\S+/gi, "Bearer [TOKEN]")
+    .slice(0, 200);
+  return sanitized;
+}
+
+// ─── Rate limiter per user ───
+const rateLimitMap = new Map<number, number[]>();
+
+function isRateLimited(userId: number): boolean {
+  const now = Date.now();
+  const timestamps = rateLimitMap.get(userId) || [];
+  // Remove expired entries
+  const valid = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  rateLimitMap.set(userId, valid);
+  if (valid.length >= RATE_LIMIT_MAX_MESSAGES) return true;
+  valid.push(now);
+  return false;
+}
+
+// ─── Per-user conversation context with TTL ───
+interface UserContext {
+  messages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: any[] }>;
+  lastActivity: number;
+}
+
+const userContexts = new Map<number, UserContext>();
+
+// Periodic cleanup of stale contexts
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
+function startContextCleanup() {
+  if (cleanupInterval) return;
+  cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [userId, ctx] of Array.from(userContexts.entries())) {
+      if (now - ctx.lastActivity > CONTEXT_TTL_MS) {
+        userContexts.delete(userId);
+      }
+    }
+    // Also clean rate limit map
+    for (const [userId, timestamps] of Array.from(rateLimitMap.entries())) {
+      const valid = timestamps.filter((t: number) => now - t < RATE_LIMIT_WINDOW_MS);
+      if (valid.length === 0) rateLimitMap.delete(userId);
+      else rateLimitMap.set(userId, valid);
+    }
+  }, 5 * 60 * 1000); // every 5 minutes
+}
+
+function stopContextCleanup() {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+  }
+}
+
+function getUserContext(telegramUserId: number): Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: any[] }> {
+  // Enforce max cached users
+  if (!userContexts.has(telegramUserId) && userContexts.size >= MAX_CACHED_USERS) {
+    // Evict oldest entry
+    let oldestKey: number | null = null;
+    let oldestTime = Infinity;
+    for (const [key, val] of Array.from(userContexts.entries())) {
+      if (val.lastActivity < oldestTime) {
+        oldestTime = val.lastActivity;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey !== null) userContexts.delete(oldestKey);
+  }
+
+  if (!userContexts.has(telegramUserId)) {
+    userContexts.set(telegramUserId, { messages: [], lastActivity: Date.now() });
+  }
+  const ctx = userContexts.get(telegramUserId)!;
+  ctx.lastActivity = Date.now();
+  return ctx.messages;
+}
+
+function clearUserContext(telegramUserId: number) {
+  userContexts.set(telegramUserId, { messages: [], lastActivity: Date.now() });
+}
+
+// ─── Allowed Telegram user IDs (from env) ───
+function getAllowedUserIds(): number[] {
+  const envVal = process.env.TELEGRAM_ALLOWED_USERS || "";
+  if (!envVal) return [];
+  return envVal.split(",").map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+}
+
+export function isUserAllowed(userId: number): boolean {
+  const allowed = getAllowedUserIds();
+  if (allowed.length === 0) return true;
+  return allowed.includes(userId);
 }
 
 // ─── Tool definitions for the LLM ───
@@ -276,7 +376,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
           content: safeArgs.content, tags: safeArgs.tags, categories: safeArgs.categories,
           draft: safeArgs.draft ?? false, hugoUrl: data.url, syncedAt: new Date(),
         });
-        return { result: `✅ Статья "${safeArgs.title}" создана!${data.url ? `\nURL: ${data.url}` : ""}` };
+        return { result: `✅ Статья "${safeArgs.title}" создана!` };
       } catch (e: any) {
         const filename = (safeArgs.title || "untitled").toLowerCase().replace(/[^a-zа-яё0-9]+/gi, "-").replace(/-+/g, "-");
         await upsertArticle({
@@ -284,7 +384,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
           description: safeArgs.description, tags: safeArgs.tags, categories: safeArgs.categories,
           draft: true, syncedAt: new Date(),
         });
-        return { result: `⚠️ Статья сохранена локально как черновик. Ошибка Hugo: ${e.message}` };
+        return { result: `⚠️ Статья сохранена локально как черновик. Ошибка Hugo: ${sanitizeErrorForUser(e)}` };
       }
     }
 
@@ -311,7 +411,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
         }
         return { result: `✅ Статья "${filename}" обновлена!` };
       } catch (e: any) {
-        return { result: `❌ Ошибка редактирования: ${e.message}` };
+        return { result: `❌ Ошибка редактирования: ${sanitizeErrorForUser(e)}` };
       }
     }
 
@@ -324,7 +424,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
         await deleteArticle(safeArgs.filename);
         return { result: `🗑 Статья "${safeArgs.filename}" удалена.` };
       } catch (e: any) {
-        return { result: `❌ Ошибка удаления: ${e.message}` };
+        return { result: `❌ Ошибка удаления: ${sanitizeErrorForUser(e)}` };
       }
     }
 
@@ -346,7 +446,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
         }
         return { result: `🔄 Синхронизация завершена! Загружено ${synced} статей.` };
       } catch (e: any) {
-        return { result: `❌ Ошибка синхронизации: ${e.message}` };
+        return { result: `❌ Ошибка синхронизации: ${sanitizeErrorForUser(e)}` };
       }
     }
 
@@ -384,7 +484,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
 
         if (pixabayKey) {
           const res = await fetchWithTimeout(
-            `https://pixabay.com/api/?key=${pixabayKey}&q=${encodeURIComponent(safeArgs.query)}&per_page=${count}&image_type=photo`
+            `https://pixabay.com/api/?key=${encodeURIComponent(pixabayKey)}&q=${encodeURIComponent(safeArgs.query)}&per_page=${count}&image_type=photo`
           );
           if (!res.ok) throw new Error("Pixabay error");
           const data = await res.json();
@@ -397,7 +497,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
 
         return { result: "⚠️ API-ключи для поиска изображений не настроены. Настройте через /settings или используйте генерацию AI-изображений." };
       } catch (e: any) {
-        return { result: `❌ Ошибка поиска: ${e.message}` };
+        return { result: `❌ Ошибка поиска: ${sanitizeErrorForUser(e)}` };
       }
     }
 
@@ -410,7 +510,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<{ r
           metadata: { type: "generated_image", url, prompt: safeArgs.prompt },
         };
       } catch (e: any) {
-        return { result: `❌ Ошибка генерации: ${e.message}` };
+        return { result: `❌ Ошибка генерации: ${sanitizeErrorForUser(e)}` };
       }
     }
 
@@ -516,33 +616,6 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент для управлени�
 - Используй эмодзи для наглядности
 - При генерации статей учитывай контекст существующих статей блога`;
 
-// ─── Per-user conversation context (in-memory for Telegram) ───
-const userContexts = new Map<number, Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: any[] }>>();
-
-function getUserContext(telegramUserId: number) {
-  if (!userContexts.has(telegramUserId)) {
-    userContexts.set(telegramUserId, []);
-  }
-  return userContexts.get(telegramUserId)!;
-}
-
-function clearUserContext(telegramUserId: number) {
-  userContexts.set(telegramUserId, []);
-}
-
-// ─── Allowed Telegram user IDs (from env) ───
-function getAllowedUserIds(): number[] {
-  const envVal = process.env.TELEGRAM_ALLOWED_USERS || "";
-  if (!envVal) return []; // empty = allow all
-  return envVal.split(",").map(id => parseInt(id.trim())).filter(id => !isNaN(id));
-}
-
-function isUserAllowed(userId: number): boolean {
-  const allowed = getAllowedUserIds();
-  if (allowed.length === 0) return true; // no restriction
-  return allowed.includes(userId);
-}
-
 // ─── Process message through LLM with tool calling ───
 async function processMessage(userMessage: string, telegramUserId: number): Promise<{
   text: string;
@@ -550,7 +623,6 @@ async function processMessage(userMessage: string, telegramUserId: number): Prom
 }> {
   const context = getUserContext(telegramUserId);
 
-  // Add user message to context
   context.push({ role: "user", content: userMessage });
 
   // Keep context manageable
@@ -597,7 +669,6 @@ async function processMessage(userMessage: string, telegramUserId: number): Prom
           const toolResult = await executeTool(fnName, fnArgs);
           toolResults.push({ name: fnName, ...toolResult });
 
-          // Collect images for sending as photos
           if (toolResult.metadata?.type === "images" && toolResult.metadata.images) {
             for (const img of toolResult.metadata.images.slice(0, 4)) {
               images.push({ url: img.url || img.thumb, caption: img.description });
@@ -630,12 +701,11 @@ async function processMessage(userMessage: string, telegramUserId: number): Prom
         : "Не удалось получить ответ. Попробуйте ещё раз.";
     }
 
-    // Add assistant response to context
     context.push({ role: "assistant", content: finalContent });
 
     return { text: finalContent, images };
   } catch (error: any) {
-    const errorMsg = `❌ Ошибка AI: ${error.message}`;
+    const errorMsg = `❌ Ошибка AI: ${sanitizeErrorForUser(error)}`;
     context.push({ role: "assistant", content: errorMsg });
     return { text: errorMsg };
   }
@@ -645,9 +715,14 @@ async function processMessage(userMessage: string, telegramUserId: number): Prom
 export function createTelegramBot(token: string): Bot {
   const bot = new Bot(token);
 
+  // ─── Access check middleware for all commands ───
+  function checkAccess(ctx: Context): boolean {
+    return isUserAllowed(ctx.from?.id ?? 0);
+  }
+
   // ─── /start command ───
   bot.command("start", async (ctx) => {
-    if (!isUserAllowed(ctx.from?.id ?? 0)) {
+    if (!checkAccess(ctx)) {
       await ctx.reply("⛔ У вас нет доступа к этому боту.");
       return;
     }
@@ -671,8 +746,12 @@ export function createTelegramBot(token: string): Bot {
     );
   });
 
-  // ─── /help command ───
+  // ─── /help command (with access check) ───
   bot.command("help", async (ctx) => {
+    if (!checkAccess(ctx)) {
+      await ctx.reply("⛔ У вас нет доступа к этому боту.");
+      return;
+    }
     await ctx.reply(
       "📖 *Справка по командам*\n\n" +
       "/start \\- Главное меню\n" +
@@ -689,7 +768,7 @@ export function createTelegramBot(token: string): Bot {
 
   // ─── /articles command ───
   bot.command("articles", async (ctx) => {
-    if (!isUserAllowed(ctx.from?.id ?? 0)) return;
+    if (!checkAccess(ctx)) return;
     await ctx.reply("⏳ Загружаю список статей...");
     const result = await processMessage("Покажи список всех статей", ctx.from!.id);
     for (const part of splitMessage(result.text)) {
@@ -699,7 +778,7 @@ export function createTelegramBot(token: string): Bot {
 
   // ─── /stats command ───
   bot.command("stats", async (ctx) => {
-    if (!isUserAllowed(ctx.from?.id ?? 0)) return;
+    if (!checkAccess(ctx)) return;
     await ctx.reply("⏳ Загружаю статистику...");
     const result = await processMessage("Покажи статистику блога", ctx.from!.id);
     await ctx.reply(result.text);
@@ -707,7 +786,7 @@ export function createTelegramBot(token: string): Bot {
 
   // ─── /sync command ───
   bot.command("sync", async (ctx) => {
-    if (!isUserAllowed(ctx.from?.id ?? 0)) return;
+    if (!checkAccess(ctx)) return;
     await ctx.reply("🔄 Синхронизация с Hugo...");
     const result = await processMessage("Синхронизируй статьи с Hugo", ctx.from!.id);
     await ctx.reply(result.text);
@@ -715,79 +794,87 @@ export function createTelegramBot(token: string): Bot {
 
   // ─── /settings command ───
   bot.command("settings", async (ctx) => {
-    if (!isUserAllowed(ctx.from?.id ?? 0)) return;
+    if (!checkAccess(ctx)) return;
     const result = await processMessage("Покажи текущие настройки", ctx.from!.id);
     await ctx.reply(result.text);
   });
 
-  // ─── /new command (clear context) ───
+  // ─── /new command (clear context, with access check) ───
   bot.command("new", async (ctx) => {
+    if (!checkAccess(ctx)) {
+      await ctx.reply("⛔ У вас нет доступа к этому боту.");
+      return;
+    }
     clearUserContext(ctx.from!.id);
     await ctx.reply("🆕 Контекст очищен. Начинаем новый разговор!");
   });
 
-  // ─── Inline keyboard callbacks ───
-  bot.callbackQuery("cmd_stats", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply("⏳ Загружаю статистику...");
-    const result = await processMessage("Покажи статистику блога", ctx.from!.id);
-    await ctx.reply(result.text);
-  });
+  // ─── Inline keyboard callbacks (with access check) ───
+  const callbackHandlers: Record<string, (ctx: Context) => Promise<void>> = {
+    cmd_stats: async (ctx) => {
+      await ctx.reply("⏳ Загружаю статистику...");
+      const result = await processMessage("Покажи статистику блога", ctx.from!.id);
+      await ctx.reply(result.text);
+    },
+    cmd_articles: async (ctx) => {
+      await ctx.reply("⏳ Загружаю статьи...");
+      const result = await processMessage("Покажи список статей", ctx.from!.id);
+      for (const part of splitMessage(result.text)) {
+        await ctx.reply(part);
+      }
+    },
+    cmd_write: async (ctx) => {
+      await ctx.reply("✍️ О чём написать статью? Напишите тему:");
+    },
+    cmd_sync: async (ctx) => {
+      await ctx.reply("🔄 Синхронизация...");
+      const result = await processMessage("Синхронизируй статьи с Hugo", ctx.from!.id);
+      await ctx.reply(result.text);
+    },
+    cmd_images: async (ctx) => {
+      await ctx.reply("🔍 Что искать? Напишите запрос для поиска изображений:");
+    },
+    cmd_genimg: async (ctx) => {
+      await ctx.reply("🎨 Опишите изображение, которое нужно сгенерировать:");
+    },
+    cmd_settings: async (ctx) => {
+      const result = await processMessage("Покажи настройки", ctx.from!.id);
+      await ctx.reply(result.text);
+    },
+    cmd_help: async (ctx) => {
+      await ctx.reply(
+        "📖 Справка:\n\n" +
+        "/start - Главное меню\n" +
+        "/articles - Список статей\n" +
+        "/stats - Статистика\n" +
+        "/sync - Синхронизация\n" +
+        "/settings - Настройки\n" +
+        "/new - Новый контекст\n\n" +
+        "Или просто напишите запрос!"
+      );
+    },
+  };
 
-  bot.callbackQuery("cmd_articles", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply("⏳ Загружаю статьи...");
-    const result = await processMessage("Покажи список статей", ctx.from!.id);
-    for (const part of splitMessage(result.text)) {
-      await ctx.reply(part);
-    }
-  });
-
-  bot.callbackQuery("cmd_write", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply("✍️ О чём написать статью? Напишите тему:");
-  });
-
-  bot.callbackQuery("cmd_sync", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply("🔄 Синхронизация...");
-    const result = await processMessage("Синхронизируй статьи с Hugo", ctx.from!.id);
-    await ctx.reply(result.text);
-  });
-
-  bot.callbackQuery("cmd_images", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply("🔍 Что искать? Напишите запрос для поиска изображений:");
-  });
-
-  bot.callbackQuery("cmd_genimg", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply("🎨 Опишите изображение, которое нужно сгенерировать:");
-  });
-
-  bot.callbackQuery("cmd_settings", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const result = await processMessage("Покажи настройки", ctx.from!.id);
-    await ctx.reply(result.text);
-  });
-
-  bot.callbackQuery("cmd_help", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply(
-      "📖 Справка:\n\n" +
-      "/start - Главное меню\n" +
-      "/articles - Список статей\n" +
-      "/stats - Статистика\n" +
-      "/sync - Синхронизация\n" +
-      "/settings - Настройки\n" +
-      "/new - Новый контекст\n\n" +
-      "Или просто напишите запрос!"
-    );
-  });
+  // Register all callback handlers with access check
+  for (const [callbackData, handler] of Object.entries(callbackHandlers)) {
+    bot.callbackQuery(callbackData, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      if (!checkAccess(ctx)) {
+        await ctx.reply("⛔ У вас нет доступа.");
+        return;
+      }
+      try {
+        await handler(ctx);
+      } catch (error: any) {
+        console.error(`[TG] Callback ${callbackData} error:`, error);
+        await ctx.reply(`❌ Ошибка: ${sanitizeErrorForUser(error)}`);
+      }
+    });
+  }
 
   // ─── Handle all text messages ───
   bot.on("message:text", async (ctx) => {
-    if (!isUserAllowed(ctx.from?.id ?? 0)) {
+    if (!checkAccess(ctx)) {
       await ctx.reply("⛔ У вас нет доступа к этому боту.");
       return;
     }
@@ -795,7 +882,12 @@ export function createTelegramBot(token: string): Bot {
     const userMessage = ctx.message.text;
     if (!userMessage || userMessage.startsWith("/")) return;
 
-    // Show typing indicator
+    // Rate limiting
+    if (isRateLimited(ctx.from!.id)) {
+      await ctx.reply("⏳ Слишком много сообщений. Подождите минуту перед следующим запросом.");
+      return;
+    }
+
     await ctx.replyWithChatAction("typing");
 
     try {
@@ -809,7 +901,6 @@ export function createTelegramBot(token: string): Bot {
               caption: img.caption ? img.caption.slice(0, 200) : undefined,
             });
           } catch (imgErr: any) {
-            // If photo sending fails, include URL in text
             console.warn(`[TG] Failed to send photo: ${imgErr.message}`);
           }
         }
@@ -820,41 +911,61 @@ export function createTelegramBot(token: string): Bot {
         try {
           await ctx.reply(part);
         } catch {
-          // Fallback without formatting
           await ctx.reply(part.replace(/[*_`\[\]]/g, ""));
         }
       }
     } catch (error: any) {
       console.error("[TG] Message processing error:", error);
-      await ctx.reply(`❌ Произошла ошибка: ${error.message}`);
+      await ctx.reply(`❌ Произошла ошибка: ${sanitizeErrorForUser(error)}`);
     }
   });
 
-  // ─── Handle photos (for image editing) ───
+  // ─── Handle photos — download to S3 instead of leaking bot token ───
   bot.on("message:photo", async (ctx) => {
-    if (!isUserAllowed(ctx.from?.id ?? 0)) return;
+    if (!checkAccess(ctx)) return;
+
+    // Rate limiting
+    if (isRateLimited(ctx.from!.id)) {
+      await ctx.reply("⏳ Слишком много сообщений. Подождите минуту.");
+      return;
+    }
+
     const caption = ctx.message.caption || "Пользователь отправил изображение";
     await ctx.replyWithChatAction("typing");
 
-    // Get the largest photo
-    const photo = ctx.message.photo[ctx.message.photo.length - 1];
-    const file = await ctx.api.getFile(photo.file_id);
-    const fileUrl = `https://api.telegram.org/file/bot${bot.token}/${file.file_path}`;
+    try {
+      // Get the largest photo
+      const photo = ctx.message.photo[ctx.message.photo.length - 1];
+      const file = await ctx.api.getFile(photo.file_id);
 
-    const result = await processMessage(
-      `${caption}\n\n[Пользователь прикрепил изображение: ${fileUrl}]`,
-      ctx.from!.id
-    );
+      // Download photo to buffer (avoid leaking bot token in URL)
+      const fileUrl = `https://api.telegram.org/file/bot${bot.token}/${file.file_path}`;
+      const response = await fetchWithTimeout(fileUrl);
+      const buffer = Buffer.from(await response.arrayBuffer());
 
-    for (const part of splitMessage(result.text)) {
-      await ctx.reply(part);
+      // Upload to S3
+      const ext = file.file_path?.split(".").pop() || "jpg";
+      const s3Key = `telegram-uploads/${ctx.from!.id}-${Date.now()}.${ext}`;
+      const { url: safeUrl } = await storagePut(s3Key, buffer, `image/${ext}`);
+
+      const result = await processMessage(
+        `${caption}\n\n[Пользователь прикрепил изображение: ${safeUrl}]`,
+        ctx.from!.id
+      );
+
+      for (const part of splitMessage(result.text)) {
+        await ctx.reply(part);
+      }
+    } catch (error: any) {
+      console.error("[TG] Photo processing error:", error);
+      await ctx.reply(`❌ Ошибка обработки изображения: ${sanitizeErrorForUser(error)}`);
     }
   });
 
   return bot;
 }
 
-// ─── Start the bot ───
+// ─── Start the bot with graceful shutdown ───
 export async function startTelegramBot(): Promise<Bot | null> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -863,6 +974,19 @@ export async function startTelegramBot(): Promise<Bot | null> {
   }
 
   const bot = createTelegramBot(token);
+
+  // Start context cleanup timer
+  startContextCleanup();
+
+  // Graceful shutdown handlers
+  const shutdown = () => {
+    console.log("[TG Bot] Shutting down gracefully...");
+    stopContextCleanup();
+    bot.stop();
+  };
+
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 
   // Start polling
   console.log("[TG Bot] Starting...");

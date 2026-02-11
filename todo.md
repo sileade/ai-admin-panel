@@ -119,4 +119,17 @@
 - [x] Update Docker Compose with Telegram env vars and --telegram flag in setup.sh
 - [x] Update README for Telegram bot version
 - [x] Write vitest tests for bot logic (18 tests passing)
-- [ ] Push to GitHub (in progress)
+- [x] Push to GitHub
+
+## Code Review & Testing v2 (Telegram Bot)
+- [ ] Server code review: telegram-bot.ts (tool-calling, commands, security)
+- [ ] Server code review: routers.ts, db.ts, schema
+- [ ] Security review: input validation, injection, access control
+- [ ] Client code review: landing page Home.tsx
+- [ ] Docker review: Dockerfile, compose, scripts
+- [ ] Fix all critical and high issues found
+- [ ] Expand vitest test coverage for Telegram bot
+- [ ] Integration tests for tool execution pipeline
+- [ ] Edge case tests (empty inputs, long messages, concurrent users)
+- [ ] Write code review report
+- [ ] Push fixes to GitHub

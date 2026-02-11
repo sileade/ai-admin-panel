@@ -20,7 +20,7 @@ const COMMANDS = [
 ];
 
 export default function Home() {
-  const botUsername = (window as any).__TG_BOT_USERNAME__ || "your_bot";
+  const botUsername = import.meta.env.VITE_TG_BOT_USERNAME || "your_bot";
 
   return (
     <div className="min-h-screen bg-background text-foreground">

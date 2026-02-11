@@ -1,10 +1,8 @@
-import { eq, desc, sql, like, and, or, asc } from "drizzle-orm";
+import { eq, desc, sql, like, and, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, settings, articles, aiGenerations,
-  chatConversations, chatMessages,
   type InsertArticle, type InsertAiGeneration,
-  type InsertChatConversation, type InsertChatMessage
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -170,66 +168,4 @@ export async function getRecentGenerations(userId: number, limit = 20) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(aiGenerations).where(eq(aiGenerations.userId, userId)).orderBy(desc(aiGenerations.createdAt)).limit(limit);
-}
-
-// ─── Chat Conversation helpers ───
-export async function createConversation(userId: number, title?: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.insert(chatConversations).values({
-    userId,
-    title: title || "Новый чат",
-  });
-  return result[0]?.insertId;
-}
-
-export async function getConversations(userId: number, limit = 50) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(chatConversations)
-    .where(eq(chatConversations.userId, userId))
-    .orderBy(desc(chatConversations.updatedAt))
-    .limit(limit);
-}
-
-export async function getConversation(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(chatConversations).where(eq(chatConversations.id, id)).limit(1);
-  return result.length > 0 ? result[0] : null;
-}
-
-export async function updateConversationTitle(id: number, title: string) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(chatConversations).set({ title }).where(eq(chatConversations.id, id));
-}
-
-export async function deleteConversation(id: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.delete(chatMessages).where(eq(chatMessages.conversationId, id));
-  await db.delete(chatConversations).where(eq(chatConversations.id, id));
-}
-
-// ─── Chat Message helpers ───
-export async function addChatMessage(msg: InsertChatMessage) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.insert(chatMessages).values(msg);
-  // Touch conversation updatedAt
-  if (msg.conversationId) {
-    await db.update(chatConversations)
-      .set({ updatedAt: new Date() })
-      .where(eq(chatConversations.id, msg.conversationId));
-  }
-  return result[0]?.insertId;
-}
-
-export async function getConversationMessages(conversationId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(chatMessages)
-    .where(eq(chatMessages.conversationId, conversationId))
-    .orderBy(asc(chatMessages.createdAt));
 }

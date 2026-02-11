@@ -51,3 +51,29 @@
 - Server: "[TG Bot] TELEGRAM_BOT_TOKEN not set, bot disabled" — expected
 - TypeScript: No errors, LSP: No errors, Dependencies: OK
 - 18 vitest tests passing
+
+## Screenshot 5 - After Code Review v2 Fixes (2026-02-10)
+- Landing page renders correctly: "AI Blog Bot" title, Telegram CTA button
+- Dark theme with gradient background looks professional
+- No TypeScript errors, no build errors
+- Server running, TG Bot disabled (no token set - expected)
+- All 44 vitest tests passing (expanded from 18)
+- LSP: no errors, TypeScript: no errors, Dependencies: OK
+- All critical and high code review issues fixed
+
+## Screenshot 6 - After Dead Code Cleanup (2026-02-10)
+- Removed: server/routers/chat.ts, server/routers/ai.ts, server/routers/hugo.ts
+- Removed: chatConversations, chatMessages tables from schema and db.ts
+- Updated: docker/mysql/init.sql (no chat tables)
+- Fixed: Dockerfile labels, entrypoint.sh (nc instead of /dev/tcp)
+- Fixed: Home.tsx uses VITE_TG_BOT_USERNAME env var
+- Added: VITE_TG_BOT_USERNAME to docker-compose.yml and env.example
+- Landing page renders correctly, no TS errors, server clean
+
+## Screenshot 7 - Final Code Review v2 (2026-02-11)
+- Stale dist/index.js contained old chatConversations import — fixed by removing dist/
+- Server running clean: no errors, TG Bot disabled (no token - expected)
+- TypeScript: 0 errors, LSP: No errors, Dependencies: OK
+- Landing page renders correctly with dark gradient theme
+- All 44 vitest tests passing (1.00s)
+- CODE_REVIEW_REPORT.md written with full findings
